@@ -1,0 +1,17 @@
+# Java
+backend/target/
+*.log
+
+# Angular / Node
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# secrets
+.env
+application-local.yml

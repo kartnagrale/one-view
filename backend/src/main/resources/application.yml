@@ -1,0 +1,63 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: agri-analytix-backend
+  jackson:
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+agri:
+  demo-mode: ${AGRI_DEMO_MODE:true}
+  refresh-ms: ${AGRI_REFRESH_MS:900000} # 15 minutes
+  history-start: ${AGRI_HISTORY_START:2022-04-01}
+  refresh-lookback-days: ${AGRI_REFRESH_LOOKBACK_DAYS:14}
+
+  # MarketWatch-maintained mapping data. Stored in the same physical Market DB,
+  # but isolated in an AGRI-ANALYTIX-owned schema.
+  mapping-schema: ${AGRI_MAPPING_SCHEMA:agri_analytix}
+  mapping-auto-init: ${AGRI_MAPPING_AUTO_INIT:true}
+
+  auth:
+    # Local/demo Basic Auth. Replace with NeML SSO/AD in production.
+    internal-user: ${AGRI_INTERNAL_USER:analyst}
+    internal-password: ${AGRI_INTERNAL_PASSWORD:demo123}
+    marketwatch-user: ${AGRI_MARKETWATCH_USER:marketwatch}
+    marketwatch-password: ${AGRI_MARKETWATCH_PASSWORD:demo123}
+
+  # Exactly three physical database connections:
+  # 1) MARKET: auctionv2replica + participant-masterv2_replica schemas
+  # 2) SUGAR: sugarpgprd
+  # 3) NCDFI: ncdfiprd21
+  datasources:
+    MASTER:
+      enabled: ${MASTER_DB_ENABLED:true}
+      jdbc-url: ${MASTER_DB_URL:jdbc:postgresql://uat-auction-hyd-cluster.cluster-cqiizwijdxjv.ap-south-2.rds.amazonaws.com:1521/postgres}
+      username: ${MASTER_DB_USER:auctionv2replica}
+      password: ${MASTER_DB_PASSWORD:password123}
+      maximum-pool-size: ${MASTER_DB_POOL_SIZE:1}
+      # false because the same connection writes only AGRI-ANALYTIX mapping config.
+      # Source schemas should still be permissioned read-only for this account.
+      read-only: ${MASTER_DB_READ_ONLY:false}
+
+    SUGAR:
+      enabled: ${SUGAR_DB_ENABLED:true}
+      jdbc-url: ${SUGAR_DB_URL:jdbc:postgresql://uat-auction-hyd-cluster.cluster-cqiizwijdxjv.ap-south-2.rds.amazonaws.com:1521/postgres}
+      username: ${SUGAR_DB_USER:mktpguat}
+      password: ${SUGAR_DB_PASSWORD:password123}
+      maximum-pool-size: ${SUGAR_DB_POOL_SIZE:1}
+      read-only: true
+
+    NCDFI:
+      enabled: ${NCDFI_DB_ENABLED:true}
+      jdbc-url: ${NCDFI_DB_URL:jdbc:postgresql://uat-auction-hyd-cluster.cluster-cqiizwijdxjv.ap-south-2.rds.amazonaws.com:1521/postgres}
+      username: ${NCDFI_DB_USER:ncdfipguatnew}
+      password: ${NCDFI_DB_PASSWORD:password123}
+      maximum-pool-size: ${NCDFI_DB_POOL_SIZE:1}
+      read-only: true

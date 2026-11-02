@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1260" viewBox="0 0 1600 1260" style="max-width:100%;height:auto;display:block" role="img" aria-labelledby="title desc">
+  <title id="title">AGRI-ANALYTIX | Project One-View Roadmap</title>
+  <desc id="desc">One-view architecture, auction data flow, role-based access, business monitoring, and next-step severity timeline roadmap for AGRI-ANALYTIX.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f3f6f1"/>
+      <stop offset="1" stop-color="#e8efeb"/>
+    </linearGradient>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#123d36"/>
+      <stop offset="1" stop-color="#176b5b"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#18332d" flood-opacity=".09"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4d8074"/>
+    </marker>
+    <style>
+      text{font-family:Arial,Helvetica,sans-serif;fill:#17352f}
+      .eyebrow{font-size:13px;font-weight:700;letter-spacing:1.6px}
+      .title{font-size:37px;font-weight:700;fill:#fff}
+      .subtitle{font-size:16px;fill:#d7e8e2}
+      .section{font-size:20px;font-weight:700}
+      .label{font-size:13px;font-weight:700;letter-spacing:.7px}
+      .body{font-size:14px;fill:#45635c}
+      .small{font-size:12px;fill:#58736c}
+      .node-title{font-size:17px;font-weight:700}
+      .node-copy{font-size:13px;fill:#45635c}
+      .white{fill:#fff}
+      .muted-white{fill:#d4e4df}
+      .line{stroke:#4d8074;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+      .thin-line{stroke:#dbe5e0;stroke-width:1}
+    </style>
+  </defs>
+
+  <rect width="1600" height="1260" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1600" height="142" fill="url(#header)"/>
+  <path d="M1240 0h360v142h-490z" fill="#ffffff" opacity=".045"/>
+  <text x="64" y="42" class="eyebrow muted-white">COMMODITY AUCTION INTELLIGENCE</text>
+  <text x="64" y="91" class="title">AGRI-ANALYTIX | One-View Roadmap</text>
+  <text x="66" y="119" class="subtitle">One easy-to-find business view with maps, reports, AI assistance and role-aware access.</text>
+  <rect x="1327" y="45" width="210" height="40" rx="20" fill="#d5eee4"/>
+  <circle cx="1351" cy="65" r="6" fill="#228267"/>
+  <text x="1366" y="70" font-size="13" font-weight="700" fill="#17463b">ANGULAR + SPRING BOOT</text>
+
+  <text x="64" y="186" class="section">1 / How data becomes a one-view</text>
+  <text x="64" y="210" class="body">A scheduled refresh prepares a last-good snapshot; dashboard requests read the snapshot, not the source databases.</text>
+  <rect x="48" y="230" width="1504" height="320" rx="16" fill="#fff" filter="url(#shadow)"/>
+
+  <text x="76" y="267" class="label" fill="#527068">SOURCE SYSTEMS</text>
+  <rect x="72" y="282" width="270" height="222" rx="11" fill="#f5f8f6" stroke="#d7e3dd"/>
+  <rect x="88" y="298" width="238" height="62" rx="8" fill="#e6f0eb"/>
+  <circle cx="108" cy="319" r="6" fill="#218268"/>
+  <text x="124" y="324" class="node-title">Market</text>
+  <text x="104" y="346" class="node-copy">Auction + participant replicas</text>
+  <rect x="88" y="371" width="238" height="52" rx="8" fill="#f2eee2"/>
+  <circle cx="108" cy="391" r="6" fill="#c68c35"/>
+  <text x="124" y="396" class="node-title">Sugar</text>
+  <text x="104" y="414" class="node-copy">sugarpgprd</text>
+  <rect x="88" y="434" width="238" height="52" rx="8" fill="#e8edf5"/>
+  <circle cx="108" cy="454" r="6" fill="#5474a0"/>
+  <text x="124" y="459" class="node-title">NCDFI</text>
+  <text x="104" y="477" class="node-copy">ncdfiprd21</text>
+
+  <path d="M354 393h38" class="line"/>
+  <rect x="398" y="282" width="245" height="222" rx="11" fill="#edf5f1" stroke="#cbded5"/>
+  <circle cx="428" cy="316" r="15" fill="#1f725f"/>
+  <text x="423" y="321" font-size="13" font-weight="700" class="white">01</text>
+  <text x="454" y="322" class="node-title">Fetch + normalize</text>
+  <text x="420" y="356" class="node-copy">Every 15 minutes</text>
+  <text x="420" y="382" class="node-copy">AO rows become auctions</text>
+  <text x="420" y="405" class="node-copy">AB rows count bidders</text>
+  <text x="420" y="439" class="node-copy">S side = Forward</text>
+  <text x="420" y="462" class="node-copy">B side = Reverse</text>
+  <text x="420" y="485" class="small">Source records stay unchanged</text>
+
+  <path d="M654 393h38" class="line"/>
+  <rect x="698" y="282" width="245" height="222" rx="11" fill="#f5f2e7" stroke="#e3dbc4"/>
+  <circle cx="728" cy="316" r="15" fill="#b28231"/>
+  <text x="723" y="321" font-size="13" font-weight="700" class="white">02</text>
+  <text x="754" y="322" class="node-title">Enrich + snapshot</text>
+  <text x="720" y="356" class="node-copy">MarketWatch mapping context</text>
+  <text x="720" y="382" class="node-copy">Client, commodity, contract</text>
+  <text x="720" y="405" class="node-copy">State, location, warehouse</text>
+  <text x="720" y="439" class="node-copy">Atomic in-memory snapshot</text>
+  <text x="720" y="462" class="node-copy">Last-good data on refresh failure</text>
+  <text x="720" y="485" class="small">Quantities remain grouped by UOM</text>
+
+  <path d="M954 393h38" class="line"/>
+  <rect x="998" y="282" width="220" height="222" rx="11" fill="#edf1f7" stroke="#d4deeb"/>
+  <circle cx="1028" cy="316" r="15" fill="#536f98"/>
+  <text x="1023" y="321" font-size="13" font-weight="700" class="white">03</text>
+  <text x="1054" y="322" class="node-title">Spring REST API</text>
+  <text x="1020" y="356" class="node-copy">Authenticated /api/**</text>
+  <text x="1020" y="382" class="node-copy">Dashboard + filters</text>
+  <text x="1020" y="405" class="node-copy">Participants + reports</text>
+  <text x="1020" y="439" class="node-copy">Excel export</text>
+  <text x="1020" y="462" class="node-copy">Mapping endpoints</text>
+  <text x="1020" y="485" class="small">Write access is role-checked</text>
+
+  <path d="M1229 393h38" class="line"/>
+  <rect x="1273" y="282" width="250" height="222" rx="11" fill="#e9f4ed" stroke="#cde2d3"/>
+  <circle cx="1303" cy="316" r="15" fill="#41835a"/>
+  <text x="1298" y="321" font-size="13" font-weight="700" class="white">04</text>
+  <text x="1329" y="322" class="node-title">Angular one-view</text>
+  <text x="1295" y="356" class="node-copy">Overview + map + global filters</text>
+  <text x="1295" y="382" class="node-copy">Auction + participant insight</text>
+  <text x="1295" y="405" class="node-copy">Reports + AI assistance</text>
+  <text x="1295" y="439" class="node-copy">KPIs + trend timelines</text>
+  <text x="1295" y="462" class="node-copy">Role-aware, filtered views</text>
+  <text x="1295" y="485" class="small">One view for business monitoring</text>
+
+  <text x="64" y="600" class="section">2 / What each login sees</text>
+  <text x="64" y="624" class="body">Successful login establishes the user's roles; both roles share the analytics workspace.</text>
+  <rect x="48" y="643" width="730" height="277" rx="16" fill="#fff" filter="url(#shadow)"/>
+  <rect x="48" y="643" width="730" height="60" rx="16" fill="#245b4e"/>
+  <path d="M48 686h730v17H48z" fill="#245b4e"/>
+  <circle cx="82" cy="673" r="13" fill="#d9efe3"/>
+  <path d="M76 673l4 4 8-9" fill="none" stroke="#245b4e" stroke-width="2.5"/>
+  <text x="108" y="679" font-size="20" font-weight="700" class="white">Internal Analyst</text>
+  <rect x="600" y="660" width="150" height="27" rx="13" fill="#d9efe3"/>
+  <text x="620" y="678" font-size="11" font-weight="700" fill="#245b4e">ROLE_INTERNAL</text>
+  <text x="78" y="738" class="label" fill="#58736c">SHARED WORKSPACE</text>
+  <text x="78" y="773" class="node-title">Overview</text>
+  <text x="78" y="796" class="node-copy">KPIs, map, trends, filters</text>
+  <text x="78" y="837" class="node-title">Auctions</text>
+  <text x="78" y="860" class="node-copy">Forward / Reverse discovery</text>
+  <text x="317" y="773" class="node-title">Participants</text>
+  <text x="317" y="796" class="node-copy">Registered + participating</text>
+  <text x="317" y="837" class="node-title">Reports</text>
+  <text x="317" y="860" class="node-copy">Analysis + Excel export</text>
+  <text x="551" y="773" class="node-title">AI Assistant</text>
+  <text x="551" y="796" class="node-copy">Explore market questions</text>
+  <rect x="551" y="824" width="190" height="56" rx="8" fill="#f3f6f4"/>
+  <text x="566" y="847" class="small">Authenticated internal users</text>
+  <text x="566" y="865" class="small">can view participant PII.</text>
+
+  <rect x="800" y="643" width="752" height="277" rx="16" fill="#fff" filter="url(#shadow)"/>
+  <rect x="800" y="643" width="752" height="60" rx="16" fill="#9a6225"/>
+  <path d="M800 686h752v17H800z" fill="#9a6225"/>
+  <circle cx="834" cy="673" r="13" fill="#fff0d6"/>
+  <path d="M828 674h12M834 668v12" stroke="#9a6225" stroke-width="2.5"/>
+  <text x="860" y="679" font-size="20" font-weight="700" class="white">MarketWatch Admin</text>
+  <rect x="1338" y="660" width="190" height="27" rx="13" fill="#fff0d6"/>
+  <text x="1353" y="678" font-size="11" font-weight="700" fill="#80501e">INTERNAL + MARKETWATCH</text>
+  <text x="830" y="738" class="label" fill="#58736c">SAME SHARED ANALYTICS</text>
+  <text x="830" y="773" class="node-title">Overview</text>
+  <text x="830" y="796" class="node-copy">KPIs, map, trends, filters</text>
+  <text x="830" y="837" class="node-title">Auctions</text>
+  <text x="830" y="860" class="node-copy">Forward / Reverse discovery</text>
+  <text x="1069" y="773" class="node-title">Participants</text>
+  <text x="1069" y="796" class="node-copy">Registered + participating</text>
+  <text x="1069" y="837" class="node-title">Reports + AI</text>
+  <text x="1069" y="860" class="node-copy">Analysis, export, assistant</text>
+  <rect x="1293" y="727" width="229" height="151" rx="10" fill="#fff4df" stroke="#ecd5aa"/>
+  <text x="1312" y="756" class="label" fill="#9a6225">EXTRA CAPABILITY</text>
+  <text x="1312" y="786" class="node-title">Mapping Console</text>
+  <text x="1312" y="812" class="node-copy">Manage business labels</text>
+  <text x="1312" y="834" class="node-copy">Create / update / delete</text>
+  <text x="1312" y="858" class="small">API enforces MARKETWATCH</text>
+
+  <text x="64" y="972" class="section">3 / Current platform + next priorities</text>
+  <rect x="48" y="994" width="1504" height="164" rx="16" fill="#fff" filter="url(#shadow)"/>
+  <path d="M150 1053H1435" stroke="#b6c9c1" stroke-width="3" marker-end="url(#arrow)"/>
+  <circle cx="150" cy="1053" r="17" fill="#1f725f"/>
+  <circle cx="505" cy="1053" r="17" fill="#1f725f"/>
+  <circle cx="860" cy="1053" r="17" fill="#b28231"/>
+  <circle cx="1215" cy="1053" r="17" fill="#536f98"/>
+  <text x="144" y="1058" class="white" font-size="12" font-weight="700">1</text>
+  <text x="499" y="1058" class="white" font-size="12" font-weight="700">2</text>
+  <text x="854" y="1058" class="white" font-size="12" font-weight="700">3</text>
+  <text x="1209" y="1058" class="white" font-size="12" font-weight="700">4</text>
+  <text x="83" y="1028" class="label" fill="#1f725f">FOUNDATION</text>
+  <text x="83" y="1092" class="node-title">Connect + normalize</text>
+  <text x="83" y="1116" class="small">Sources, business rules, 15-min refresh</text>
+  <text x="438" y="1028" class="label" fill="#1f725f">ONE-VIEW</text>
+  <text x="438" y="1092" class="node-title">Deliver analytics</text>
+  <text x="438" y="1116" class="small">Dashboard, map, reports, AI</text>
+  <text x="793" y="1028" class="label" fill="#9a6225">NEXT BUILD</text>
+  <text x="793" y="1092" class="node-title">Severity timeline + filters</text>
+  <text x="793" y="1116" class="small">Next: filter HIGH / MEDIUM / LOW / POSITIVE</text>
+  <text x="1148" y="1028" class="label" fill="#536f98">SECURE + GO LIVE</text>
+  <text x="1148" y="1092" class="node-title">Role access + validation</text>
+  <text x="1148" y="1116" class="small">Named users, PII checks, production SSO/AD</text>
+
+  <rect x="48" y="1180" width="1504" height="52" rx="10" fill="#173f36"/>
+  <text x="72" y="1212" class="label muted-white">BUILT-IN GUARDRAILS</text>
+  <line x1="279" y1="1193" x2="279" y2="1219" stroke="#54766c"/>
+  <text x="302" y="1212" class="small muted-white">UOM totals never mix</text>
+  <line x1="501" y1="1193" x2="501" y2="1219" stroke="#54766c"/>
+  <text x="524" y="1212" class="small muted-white">15-minute refresh + last-good data</text>
+  <line x1="848" y1="1193" x2="848" y2="1219" stroke="#54766c"/>
+  <text x="871" y="1212" class="small muted-white">Source DBs stay read-only</text>
+  <line x1="1120" y1="1193" x2="1120" y2="1219" stroke="#54766c"/>
+  <text x="1143" y="1212" class="small muted-white">Mapping writes are MarketWatch-only</text>
+</svg>

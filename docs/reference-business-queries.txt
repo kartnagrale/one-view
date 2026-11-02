@@ -1,0 +1,2736 @@
+1.
+please provide the data from the postgres ncdfiprd21 production schema
+
+WITH trade_summary AS (
+    SELECT
+        order_id,
+--        SUM(last_fill_qty) as total_trade_qty,
+        CASE WHEN COUNT(CASE WHEN trd_is_approved = 'T' THEN 1 END) > 0
+             THEN 'Approved'
+             ELSE 'Rejected'
+        END as approval_status
+    FROM trade_mstr
+    GROUP BY order_id
+)
+SELECT
+    row_number() OVER (
+        PARTITION BY FO.ord_auction_ord_no
+        ORDER BY
+           CASE
+                FO.ord_status
+                WHEN 'FILL' THEN 1
+                ELSE 2
+            END,
+            FO.ORD_ORD_PRICE ASC,
+            FO.ORD_ORD_QTY DESC,
+            FO.ord_ord_exch_dt ASC
+    ) AS "Rank",
+    coalesce (FO.ord_unique_number,'NA') AS "Auction Id",
+    FO.ord_auction_ord_no as "Auction Order No.",--
+    FO.ord_ord_intrnl_dt AS "Auction Date",
+    FO.ord_market_code AS "Market Code",
+    FO.ord_contract_code as "Contract code",
+    I."Initiator ID",
+    I."Initiator Name",
+    FO.ord_location AS "Location",
+    FO.ord_tm_id AS "CMID",
+    RM.org_nm AS "Bidder Name",
+    RM.ro_cty as "Bidder City",
+    FO.ord_ord_price AS "Lowest Price",
+    FO.ord_ord_qty AS "Quantity",
+    FO.ord_auction_short_code AS "Product Name",
+    coalesce(FO.ord_paramvalue11,'') AS "Product Description",
+    FO.ord_remarks AS "Auction Description",
+    FO.ord_status AS "Order Status",
+    COUNT(*) OVER (PARTITION BY FO.ord_auction_ord_no) AS "Bid Count",
+    coalesce(EM.error,'') AS "Rejection Reason",
+    coalesce(ts.approval_status,'Rejected') as "Auction Status"
+--    case when tm.trd_is_approved='T' then 'Approved' else 'Rejected' end as "Auction status"
+FROM (
+    SELECT
+        ord_contract_code, ord_auction_ord_no, ord_unique_number, ord_ord_intrnl_dt,
+        ord_market_code, ord_location, ord_tm_id, ord_ord_price, ord_ord_qty,
+        ord_auction_short_code, ord_paramvalue11, ord_remarks, ord_status,
+        ord_rej_reason, ord_ord_exch_dt, ord_ord_type,ord_exch_ord_no,ord_ord_side
+    FROM fo_orders  
+    UNION ALL
+    SELECT
+        ord_contract_code, ord_auction_ord_no, ord_unique_number, ord_ord_intrnl_dt,
+        ord_market_code, ord_location, ord_tm_id, ord_ord_price, ord_ord_qty,
+        ord_auction_short_code, ord_paramvalue11, ord_remarks, ord_status,
+        ord_rej_reason, ord_ord_exch_dt, ord_ord_type,ord_exch_ord_no,ord_ord_side
+    FROM fo_orders_purge_01feb2024 FOP
+    where NOT EXISTS (
+        SELECT 1 FROM fo_orders FO
+        WHERE FO.ord_unique_number = FOP.ord_unique_number
+    )
+) FO
+INNER JOIN registration_mstr RM ON FO.ord_tm_id = RM.org_id and rm.is_mock = 'F'
+LEFT JOIN errorcodes_mstr EM ON FO.ord_rej_reason = EM.errorcode
+left join trade_summary ts on FO.ord_exch_ord_no = ts.order_id
+left join trade_mstr tm on fo.ord_exch_ord_no = tm.order_id and tm.trd_is_approved='T'
+LEFT JOIN (select
+    distinct
+        fo.ord_tm_id as "Initiator ID",
+    um.tm_name as "Initiator Name",
+    fo.ord_exch_ord_no
+from(select
+ord_tm_id,
+        ord_exch_ord_no
+    from
+        fo_orders
+    where
+        ord_ord_type = 'AO'
+union all
+    select
+        ord_tm_id,
+        ord_exch_ord_no
+    from
+        fo_orders_purge_01feb2024
+    where
+        ord_ord_type = 'AO'
+    ) fo
+inner join tm_mstr um on
+    fo.ord_tm_id = um.tm_id) I on I.ord_exch_ord_no = FO.ord_auction_ord_no
+WHERE
+    FO.ord_ord_intrnl_dt::date BETWEEN '2022/01/01'::DATE AND '2025/10/31'::DATE
+    AND FO.ord_ord_type = 'AB'
+    and FO.ord_ord_side='S'
+    and FO.ord_contract_code in (select contract_code from temp_contracts_03_11_chemicals);
+
+
+2.
+provide the data from the sugarpgprd schema.
+
+select
+trade_datetime as "TradeDate",
+execution_id as "TradeNo",
+fo.ord_deliverymode as "DeliveryMode",
+market_code as "Market Code",
+fo.ord_market_type as "Market Type",
+fo.ord_contract_code as "ContractName",
+fo.ord_comm_code as "CommodityName",
+tm.cm_id as "CPID",
+fo.ord_tm_id as "TPID",
+tm.trading_acc_id as "ClientId",
+rm.org_nm as "AgentName",
+rm.ro_addrss as "AgentAdd",
+rm.cp_eml as "AgentEmailID",
+rm.cp_mbl as "ContactNo",
+tm.side as "Side",
+tm.last_fill_qty as "Trade Qty",
+tm.last_fill_price as "Trade Price",
+nccm.cc_price_con_factor as "PCF",
+tm.last_fill_value as "TradeValue"
+from
+trade_mstr tm
+inner join fo_orders fo on tm.order_id = fo.ord_exch_ord_no
+inner join registration_mstr rm on tm.tm_id = rm.org_id and rm.is_mock ='F'
+inner join ns_comm_contract_mst nccm on tm.symbol = nccm.cc_contract_code
+where tm.side ='B'
+and tm.market_code ='HFSM';
+
+3. Count of all the bidderes who are registered for NCCF segment participantmasterv2replica
+select
+        count(distinct org_id)
+from
+        registration_mstr rm
+inner join tm_market_mapping tmm on
+        tmm.tm_id = rm.org_id
+where
+        tmm.market_code in (
+                select market_code
+        from
+                market_mstr
+        where
+                global_client = 'NCCF') and rm.is_mock!='T' and rm.org_nm not like '%MOCK%';
+				
+4. Count of all the bidderes who participated for NCCF segment auctionv2eplica
+select
+        count(distinct ord_tm_id)
+from
+        fo_orders fo
+inner join registration_mstr rm on
+        fo.ord_tm_id = rm.org_id
+        and rm.is_mock != 'T'
+where
+        fo.global_client = 'NCCF';
+		
+5. NCCF PSF PSS Commodity Data auctionv2eplica
+select
+        ord_scheme_code as "Scheme",
+        ord_comm_code as "Commodity Code",
+        count(distinct fo.ord_tm_id) as "Total number of bidders who have participated in the auctions till date(scheme,commodity)",
+        string_agg(distinct fo.ord_tm_id::text, ', ' order by fo.ord_tm_id::text) as "Users"
+from
+        fo_orders fo
+inner join registration_mstr rm on
+        fo.ord_tm_id = rm.org_id
+        and rm.is_mock != 'T'
+where
+        fo.global_client = 'NCCF'
+group by
+        ord_scheme_code,
+        ord_comm_code
+order by
+        ord_scheme_code,
+        ord_comm_code;
+		
+6. NCCF PSF PSS Participants Data participantmasterv2replica
+select
+        fo.ord_tm_id as "Org Id",
+        rm.org_nm as "Org Name",
+        rm.registered_email_id as "Registered Email Address",
+        rm.communication_person_mobile_no as "Mobile Number",
+        string_agg(distinct fo.ord_comm_code::text, ', ' order by fo.ord_comm_code::text) as "Participated in NCCF Commodities",
+        rm.registered_state_code as "State Code",
+        rm.registered_address as "Address"
+from
+        fo_orders fo
+inner join registration_mstr rm on
+        fo.ord_tm_id = rm.org_id
+        and rm.is_mock != 'T'
+where
+        fo.global_client = 'NCCF' 
+group by 
+        fo.ord_tm_id,
+        rm.org_nm,
+        rm.registered_email_id,
+        rm.communication_person_mobile_no,
+        rm.registered_state_code,
+        rm.registered_address
+order by 
+        fo.ord_tm_id;
+		
+7. NCCF PSF PSS Registered Users Data participantmasterv2replica
+select
+        distinct rm.org_id as "Org Id",
+        rm.org_nm as "Org Name",
+        rm.registered_email_id as "Registered Email Address",
+        coalesce(rm.communication_person_mobile_no,um.user_mobile) as "Mobile Number",
+        rm.registered_state_code as "State Code",
+        rm.registered_address as "Address"
+from
+        registration_mstr rm
+left join user_mstr um on rm.org_id=um.org_id
+where
+        rm.org_id in (
+        select
+                distinct org_id
+        from
+                registration_mstr rm
+        inner join tm_market_mapping tmm on
+                tmm.tm_id = rm.org_id
+        where
+                tmm.market_code in (
+                select
+                        market_code
+                from
+                        market_mstr
+                where
+                        global_client = 'NCCF')
+                and rm.is_mock != 'T'
+                and rm.org_nm not like '%MOCK%' );
+				
+9. 
+Please execute query after approval on auctionv2eplica.
+
+select
+    fo.ord_auction_short_code as "Auction Short Code",
+    ord_bidding_end_time::date as "Auction Date",
+    fo.ord_tm_id as "Tm ID",
+    rm.org_nm as "Organisation Name",
+    fo.ord_location as "Location",
+    fo.ord_comm_code as "Commodity",
+    fo.ord_ord_qty as "Order Qty",
+    tm.last_fill_qty as "Trade Qty",
+    tm.last_fill_price as "Trade Price",
+    tm.last_fill_value as "Trade Value",
+    case
+        when tm.trd_is_approved = 'T' then 'Approved'
+        else 'Rejected'
+    end as "Approval Status"
+from
+    fo_orders fo
+left join
+    trade_mstr tm on fo.ord_exch_ord_no = tm.order_id
+left join
+    registration_mstr rm on rm.org_id = fo.ord_tm_id
+where
+    fo.ord_tm_id in (
+select org_id from registration_mstr where upper(org_nm) like upper('%PATANJALI FOODS%') or upper(org_nm) like upper('%PATANJALI AGRO%')
+    )
+    and fo.ord_ord_type = 'AO'
+    and fo.ord_status not in ('UPLOAD', 'INVALID', 'PLAN', 'CNL', 'CNLS')
+order by
+    ord_bidding_start_time;
+
+10. execute the attached queries on AuctionV2Replica and provide data in excel
+--1. List of companies/organizations for whom you have conducted online scrap auctions during the last one year AuctionV2Replica
+select
+	distinct ord_tm_id,
+	rm.org_nm
+from
+	fo_orders fo
+inner join registration_mstr rm on
+	rm.org_id = fo.ord_tm_id
+where
+	ord_comm_code like '%SCRAP%'
+	and ord_ord_type = 'AO'
+	and rm.is_mock = 'F'
+	and ord_bidding_start_time::date between '2025-01-01' and '2025-12-31';
+	
+	
+--2. Details of materials/scrap categories for which online auctions have been conducted in the last one year AuctionV2Replica
+with table1 as (
+select
+	cc_contract_code,
+	cc_contract_desc
+from
+	ns_comm_contract_mst nccm
+where
+	is_mock = 'F'
+)
+select
+	distinct trim(fo.ord_paramvalue7),
+	fo.ord_comm_code,
+	fo.ord_contract_code,
+	t.cc_contract_desc
+from
+	fo_orders fo
+inner join registration_mstr rm on
+	rm.org_id = fo.ord_tm_id
+left join table1 t on
+	t.cc_contract_code = fo.ord_contract_code
+where
+	fo.ord_ord_type = 'AO'
+	and fo.ORD_ORD_INTRNL_DT >= DATE '2025-01-01'
+	and fo.ORD_ORD_INTRNL_DT < DATE '2026-01-01'
+	and rm.is_mock = 'F'
+	and fo.ord_comm_code like '%SCRAP%';
+	
+	
+
+--OrderBook Data2025 AuctionV2Replica 
+-- OrderBook Data 2025 - Scrap Orders
+select
+	fo.ord_status as "Order Status",
+	fo.ord_ord_exch_dt as "Order date",
+	fo.ord_market_type as "Market Code",
+	fo.ord_contract_code as "Contract Code",
+	fo.ord_market_code as "Market Code",
+	fo.ord_comm_code as "Commodity Code",
+	fo.ord_dealer_id as "Dealer Id",
+	fo.ord_ord_side as "Side",
+	fo.ord_internal_ord_no as "Internal Order no.",
+	fo.ord_exch_ord_no as "Exchange Order no.",
+	fo.ord_tm_id as "TM ID",
+	fo.ord_trd_acc_no as "TAC ID",
+	fo.ord_ord_price as "Price",
+	fo.ord_ord_qty as "Qty",
+	fo.ord_price_unit as "Price Unit",
+	fo.ord_deliverymode as "Delivery Mode",
+	fo.ord_location as "Location",
+	fo.ord_pricingdate as "Pricing Date",
+	fo.ord_qty_unit as "Qty Unit",
+	fo.ord_unique_number as "Unique No",
+	fo.ord_pending_qty as "Pending Qty",
+	fo.ord_ord_value as "Order Value",
+	fo.ord_ord_type as "Order Type",
+	fo.global_client as "Global Client",
+	em.error as "Rejection Error",
+	fo.ord_remarks as "Remarks",
+	fo.ord_auction_short_code as "Auction Short Code",
+	ab.rk as Bid_rank,
+	fo.ord_bidding_start_time as "Bidding Start Time",
+	fo.ord_bidding_end_time as "Bidding End Time",
+	fo.ord_sta as "STA %",
+	fo.ord_match_qty as "MMQ",
+	fo.ord_min_bid_qty as "MBQ",
+	fo.ord_paramvalue4,
+	fo.ord_paramvalue5,
+	fo.ord_paramvalue6,
+	fo.ord_paramvalue7,
+	fo.ord_paramvalue8,
+	fo.ord_paramvalue9,
+	fo.ord_paramvalue10,
+	fo.ord_paramvalue11,
+	fo.ord_paramvalue12,
+	fo.ord_paramvalue13
+from
+	fo_orders fo
+left join (
+	select
+		ord_internal_ord_no,
+		case
+			when ord_ord_side = 'B' then 'H'
+			when ord_ord_side = 'S' then 'L'
+		end || rank() over (
+            partition by ord_auction_ord_no
+	order by
+		case
+			when fo.ord_status in ('FILL', 'PFILL') then 1
+			when fo.ord_status in ('KNKOFF') then 1
+			else 2
+		end asc,
+		case
+			when fo.ord_ord_side = 'B' then fo.ord_ord_price
+		end desc,
+		case
+			when fo.ord_ord_side = 'S' then fo.ord_ord_price
+		end asc,
+		fo.ord_ord_qty desc,
+		fo.ord_ord_exch_dt asc
+        ) as rk
+	from
+		fo_orders fo
+	inner join time_session_map tsm on
+		(
+        fo.ord_token_id = tsm.token_id
+			and tsm.session_id = 2
+			and tsm.token_is_loaded = 'C'
+    )
+	where
+		ord_ord_type = 'AB'
+		and ORD_MARKET_TYPE = 'EM'
+		and ORD_STATUS not in ('REJ', 'REPLACE')
+		and ORD_COMM_CODE like '%SCRAP%'
+		and DATE(ORD_ORD_INTRNL_DT) between DATE('2025-01-01') and DATE('2025-12-31')
+) ab on
+	fo.ord_internal_ord_no = ab.ord_internal_ord_no
+left join PROVISIONAL_TRADE_MSTR ptm 
+    on
+	fo.ORD_EXCH_ORD_NO = ptm.ORDER_ID
+left join ERRORCODES_MSTR em 
+    on
+	em.ERRORCODE = fo.ORD_REJ_REASON
+where
+	1 = 1
+	and fo.ORD_MARKET_TYPE = 'EM'
+	and fo.ORD_STATUS not in ('UPLOAD', 'INVALID')
+	and fo.ORD_COMM_CODE like '%SCRAP%'
+	and DATE(fo.ORD_ORD_INTRNL_DT) between DATE('2025-01-01') and DATE('2025-12-31')
+order by
+	fo.ORD_ORD_EXCH_DT desc;
+
+
+11.
+auctionv2replica schema.
+Kindly verify the data before forwarding.
+
+select
+count(*) as "No. of auctions done",
+sum(tm.last_fill_value) as "Total trade value of auctions done in last 2 years",
+count(distinct fo.ord_paramvalue7) as "No. of items traded",
+STRING_AGG(DISTINCT fo.ord_paramvalue7, ', ') AS "List of items traded",
+(
+        SELECT COUNT(DISTINCT ab.ord_tm_id)
+        FROM fo_orders ab
+        WHERE ab.ord_ord_type = 'AB'
+          AND ab.ord_auction_ord_no IN (
+              SELECT ao.ord_exch_ord_no
+              FROM fo_orders ao
+              INNER JOIN registration_mstr rm2
+                  ON ao.ord_tm_id = rm2.org_id
+              WHERE ao.ord_ord_type = 'AO'
+                AND ao.ord_status NOT IN ('UPLOAD','INVALID')
+                and ao.ord_ord_intrnl_dt >= CURRENT_DATE - INTERVAL '2 years'
+                AND rm2.org_id = '1103364'
+          )
+    ) AS "Registered bidder count"
+from
+fo_orders fo
+inner join registration_mstr rm on
+fo.ord_tm_id = rm.org_id and rm.is_mock='F'
+left join trade_mstr tm on fo.ord_exch_ord_no =tm.order_id
+where fo.ord_ord_type ='AO'
+and fo.ord_status not in ('UPLOAD','INVALID')
+and fo.ord_ord_intrnl_dt >= CURRENT_DATE - INTERVAL '2 years'
+and rm.org_id ='1103364';
+
+
+12. 
+please execute the below query after approval on auctionv2eplica.
+
+SELECT
+    co.ord_comm_code,
+    COUNT(DISTINCT co.ord_tm_id) AS "bidder count"
+FROM
+    (
+        SELECT
+            ord_comm_code,
+            ord_tm_id
+        FROM
+            fo_orders
+        WHERE
+            ord_ord_type = 'AB'
+        UNION ALL
+        SELECT
+            ord_comm_code,
+            ord_tm_id
+        FROM
+            fo_orders_all_purge_data
+        WHERE
+            ord_ord_type = 'AB'
+    ) co
+JOIN registration_mstr rm
+    ON co.ord_tm_id = rm.org_id
+WHERE
+    rm.is_mock != 'T'
+GROUP BY
+    co.ord_comm_code;
+
+
+
+13.
+--auctionV2Replica (market.neml.in)
+select
+tm.tm_id as "TM ID",
+rm.org_nm as "Participant Name",
+sm.state_name as "State Name",
+rm.registered_district as "District",
+rm.registered_pincode as "Pincode",
+rm.communication_person_mobile_no as "Mobile No",
+rm.registered_email_id as "Email Id",
+tm.future_symbol as "Commodity",
+sum(tm.last_fill_value) as "Trade Value"
+from
+trade_mstr tm
+inner join registration_mstr rm on
+tm.tm_id = rm.org_id
+and rm.is_mock = 'F'
+inner join state_master sm on
+rm.gst_state_code = sm.gst_state_code
+where
+  date(tm.trade_datetime) between '2024-01-01' and '2025-12-31'
+and tm.trd_is_approved = 'T'
+group by
+tm.tm_id,
+rm.org_nm,
+sm.state_name,
+rm.registered_district ,
+rm.registered_pincode ,
+rm.communication_person_mobile_no ,
+rm.registered_email_id,
+tm.future_symbol
+having
+sum(tm.last_fill_value) > 10000000;
+
+--sugarpgprd (sugar.neml.in)
+select
+tm.tm_id as "TM ID",
+rm.org_nm as "Participant Name",
+sm.state as "State Name",
+rm.ro_dst as "District",
+rm.ro_pncd as "Pincode",
+rm.cp_mbl as "Mobile No",
+rm.cp_eml as "Email Id",
+tm.future_symbol as "Commodity",
+sum(tm.last_fill_value) as "Trade Value"
+from
+trade_mstr tm
+inner join registration_mstr rm on
+tm.tm_id = rm.org_id
+and rm.is_mock = 'F'
+left join state_mstr sm on sm.state_code=rm.ro_state
+where
+  date(tm.trade_datetime) between '2024-01-01' and '2025-12-31'
+and tm.trd_is_approved = 'T'
+group by
+tm.tm_id,
+rm.org_nm,
+sm.state ,
+rm.ro_dst ,
+rm.ro_pncd ,
+rm.cp_mbl ,
+rm.cp_eml,
+tm.future_symbol
+having
+sum(tm.last_fill_value) > 10000000;
+
+14.
+PostgreSQL production  auctionv2replica schema. Also, add this query in report MIS. 
+
+
+Kindly verify the data properly before forwarding.
+
+SELECT
+    distinct rm.*,
+    um.is_active,
+    TO_CHAR(rm.created_date, 'DD-MM-YYYY') AS created_date,
+    um.user_mobile,
+    agg.total_fill_value as "Transaction Value",
+    agg.total_fill_qty as "Transaction Volume",
+    agg.future_symbol as "Commodity",
+    agg.symbol as "Contract"
+--    agg.ord_qty_unit
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+    ON um.org_id = rm.org_id
+inner JOIN (
+select
+tm.tm_id,
+SUM(last_fill_value) as total_fill_value ,
+SUM(last_fill_qty) as total_fill_qty ,
+tm.future_symbol ,
+tm.symbol  
+-- fo.ord_qty_unit
+from
+trade_mstr tm
+--inner join fo_orders fo on
+-- tm.tm_id = fo.ord_tm_id
+where tm.trd_is_approved ='T'
+group by
+tm.tm_id,
+tm.future_symbol,
+tm.symbol
+-- ord_qty_unit
+) agg
+    ON agg.tm_id = rm.org_id
+WHERE rm.org_nm NOT ILIKE '%MOCK%'
+  AND rm.org_nm NOT ILIKE 'MCK%'
+  AND rm.is_mock = 'F'
+ORDER BY rm.org_id;
+
+
+15.
+Post-approval, please provide the data from the PostgreSQL production  auctionv2replica schema. Also, add this query in report MIS.
+
+SELECT
+    distinct rm.*,
+    um.is_active,
+    TO_CHAR(rm.created_date, 'DD-MM-YYYY') AS created_date,
+    um.user_mobile,
+    ta_count.total_accounts as "Trading Account Count",
+    agg.trade_datemonth as "Trade Month",
+    agg.side as "Side",
+    agg.total_fill_value as "Transaction Value",
+    agg.total_fill_qty as "Transaction Volume",
+    agg.future_symbol as "Commodity",
+    agg.symbol as "Contract"
+--    agg.ord_qty_unit
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+    ON um.org_id = rm.org_id
+inner JOIN (
+select
+tm.tm_id,
+TO_CHAR(tm.trade_datetime, 'YYYY-MM') AS trade_datemonth,
+tm.side,
+SUM(last_fill_value) as total_fill_value ,
+SUM(last_fill_qty) as total_fill_qty ,
+tm.future_symbol ,
+tm.symbol
+-- fo.ord_qty_unit
+from
+trade_mstr tm
+--inner join fo_orders fo on
+-- tm.tm_id = fo.ord_tm_id
+where tm.trd_is_approved ='T'
+group by
+tm.tm_id,
+TO_CHAR(tm.trade_datetime, 'YYYY-MM'),
+tm.side,
+tm.future_symbol,
+tm.symbol
+-- ord_qty_unit
+) agg
+    ON agg.tm_id = rm.org_id
+LEFT JOIN (
+    SELECT
+        cm_tm_id,
+        COUNT(1) AS total_accounts
+    FROM trading_account
+    GROUP BY cm_tm_id
+) ta_count
+    ON ta_count.cm_tm_id = rm.org_id
+WHERE rm.org_nm NOT ILIKE '%MOCK%'
+  AND rm.org_nm NOT ILIKE 'MCK%'
+  AND rm.is_mock = 'F'
+ORDER BY rm.org_id;
+
+
+16.
+auctionv2replica schema.
+
+
+Kindly verify the data before forwarding.
+
+select
+distinct rm.*,
+um.is_active,
+to_char(rm.created_date, 'DD-MM-YYYY') as created_date,
+agg.trade_datemonth as "Trade Month",
+agg.side as "Side",
+agg.total_fill_value as "Transaction Value",
+agg.total_fill_qty as "Transaction Volume",
+agg.future_symbol as "Commodity",
+agg.symbol as "Contract",
+coalesce(agg.total_cost,0) as "Transaction Charge"
+from
+registration_mstr rm
+inner join user_mstr um on rm.org_id=um.org_id
+inner join (select
+tm.tm_id,
+to_char(tm.trade_datetime, 'YYYY-MM') as trade_datemonth,
+tm.side,
+sum(last_fill_value) as total_fill_value ,
+sum(last_fill_qty) as total_fill_qty ,
+tm.future_symbol ,
+tm.symbol,
+sum(db.amount) as total_cost
+from
+trade_mstr tm
+left join mktpgprd.ct_unified_cstracker cs on
+tm.execution_id = cs.trade_no
+left join (
+select
+cm_id ,
+obligation_no,
+sum(amount) as amount
+from
+mktpgprd.ct_dues_book
+where
+charge_id in (36,
+37)
+group by
+cm_id,
+obligation_no
+) db on
+db.obligation_no = cs.intention_no
+where
+tm.trd_is_approved = 'T'
+group by
+tm.tm_id,
+to_char(tm.trade_datetime, 'YYYY-MM'),
+tm.side,
+tm.future_symbol,
+tm.symbol) agg on
+agg.tm_id = rm.org_id
+where
+rm.org_nm not ilike '%MOCK%'
+and rm.org_nm not ilike 'MCK%'
+and rm.is_mock='F'
+order by
+rm.org_id;
+
+
+17.
+OrderBook For https://market.neml.in/ 
+---execute the scripts on Schema : auctionv2replica ----
+
+WITH ranked_orders AS (
+    SELECT
+        fo2.ord_internal_ord_no,
+        CASE
+            WHEN fo2.ord_ord_side = 'B' THEN 'H'
+            WHEN fo2.ord_ord_side = 'S' THEN 'L'
+        END ||
+        RANK() OVER (
+            PARTITION BY fo2.ord_auction_ord_no
+            ORDER BY
+                CASE
+                    WHEN fo2.ord_status IN ('FILL','PFILL','KNKOFF') THEN 1
+                    ELSE 2
+                END ASC,
+                CASE WHEN fo2.ord_ord_side = 'B' THEN fo2.ord_ord_price END DESC,
+                CASE WHEN fo2.ord_ord_side = 'S' THEN fo2.ord_ord_price END ASC,
+                fo2.ord_ord_qty DESC,
+                fo2.ord_ord_exch_dt ASC
+        ) AS rk
+    FROM fo_orders fo2
+    JOIN time_session_map tsm
+      ON fo2.ord_token_id = tsm.token_id
+     AND tsm.session_id = 2
+     AND tsm.token_is_loaded = 'C'
+    WHERE fo2.ord_ord_type = 'AB'
+      AND fo2.ORD_MARKET_TYPE = 'EM'
+      AND fo2.ORD_STATUS NOT IN ('REJ','REPLACE')
+      AND DATE(fo2.ORD_ORD_INTRNL_DT)
+          BETWEEN DATE('2025-04-01 00:00:00+05:30')
+              AND DATE('2026-02-17 11:42:04.596+05:30')
+)
+SELECT
+    fo.ord_status,
+    fo.ord_ord_exch_dt,
+    fo.ord_market_type,
+    fo.ord_contract_code,
+    fo.ord_market_code,
+    fo.ord_comm_code,
+    fo.ord_dealer_id,
+    fo.ord_ord_side,
+    fo.ord_internal_ord_no,
+    fo.ord_exch_ord_no,
+    fo.ord_tm_id,
+    fo.ord_trd_acc_no,
+    fo.ord_ord_price,
+    fo.ord_ord_qty,
+    fo.ord_price_unit,
+    fo.ord_deliverymode,
+    fo.ord_location,
+    fo.ord_pricingdate,
+    fo.ord_qty_unit,
+    fo.ord_token_id,
+    fo.ord_client_id,
+    fo.ord_unique_number,
+    fo.ord_pending_qty,
+    fo.ord_ord_type,
+    fo.global_client,
+    fo.ord_scheme_code,
+    fo.ord_state_name,
+    fo.ord_super_h1price,
+    fo.ord_super_h1qty,
+    fo.ord_super_h1matchqty,
+    fo.ord_created_dt,
+    fo.ord_modified_dt,
+    em.error,
+    fo.ord_paramvalue5,
+    fo.ord_remarks,
+    fo.ord_auction_short_code,
+    ro.rk AS bid_rank,
+    fo.ord_bidding_start_time,
+    fo.ord_bidding_end_time,
+    fo.ord_paramvalue8,
+    fo.ord_sta,
+    fo.ord_auction_type,
+    CASE
+        WHEN a1.auction_id IS NOT NULL THEN 'True'
+        ELSE 'False'
+    END AS "Fetched from MPMS"
+FROM FO_ORDERS fo
+LEFT JOIN ranked_orders ro
+       ON fo.ord_internal_ord_no = ro.ord_internal_ord_no
+LEFT JOIN annexture_1 a1
+       ON fo.ord_unique_number = a1.auction_id
+LEFT JOIN ERRORCODES_MSTR em
+       ON em.ERRORCODE = fo.ORD_REJ_REASON
+WHERE fo.ORD_MARKET_TYPE = 'EM'
+  AND fo.ORD_STATUS NOT IN ('UPLOAD','INVALID')
+  AND fo.ORD_ORD_TYPE = 'AO'
+  AND DATE(fo.ORD_ORD_INTRNL_DT)
+        BETWEEN DATE('2025-04-01 00:00:00+05:30')
+            AND DATE('2026-02-17 11:42:04.596+05:30')
+ORDER BY fo.ORD_ORD_EXCH_DT DESC;
+
+
+
+
+OrderBook For Sugar https://sugar.neml.in/ 
+---execute the scripts on Schema : sugarpgprd   ---
+
+select
+ord_auction_type as "Type of Auction",
+* from
+VW_ORDER_BOOK
+where
+1 = 1
+and ord_is_ord_rescheduled != 'Y'
+and ord_status != 'UPLOAD'
+and ORD_MARKET_TYPE in('EM','CM')
+and date(ORD_ORD_INTRNL_DT) between '2025-04-01 12:04:33.077+05:30' and '2026-02-17 12:04:33.077+05:30'
+order by
+ORD_ORD_EXCH_DT desc;
+
+
+
+
+OrderBook For Trade https://trade.neml.in/ 
+ --execute the scripts on Schema :tradeaucprd ---
+
+select
+      ord_auction_type as "Type of Auction",
+* from
+VW_ORDER_BOOK
+where
+1 = 1
+and ORD_MARKET_TYPE in ('EM','CM')
+and date(ORD_ORD_INTRNL_DT) between '2025-04-01 11:57:45.154+05:30' and '2026-02-17 11:57:45.154+05:30'
+order by
+ORD_ORD_EXCH_DT desc;
+
+
+
+For time session extension rule and margin defined against each contracts present in 1st report data
+-- execute the scripts on Schema : participant-masterv2_replica ----
+
+select * from time_session_extension_rule
+  LEFT JOIN OrderbookContract_Details170226 od
+      ON contract_code = od.contract_name;
+
+select * from contract_add_initial_margin    
+    Left JOIN OrderbookContract_Details170226 od
+    ON contract_code = od.contract_name where is_active='A';
+
+
+
+18.
+approval please provide the data from ncdfi production schema.
+
+SELECT
+    row_number() OVER (
+        PARTITION BY FO.ord_auction_ord_no
+        ORDER BY
+            CASE
+                FO.ord_status
+                WHEN 'FILL' THEN 1
+                ELSE 2
+            END,
+            FO.ORD_ORD_PRICE ASC,
+            FO.ORD_ORD_QTY DESC,
+            FO.ord_ord_exch_dt ASC
+    ) AS "Rank",
+    coalesce (FO.ord_unique_number,'NA') AS "Auction Id",
+    FO.ord_auction_ord_no as "Auction Order No.",--
+    FO.ord_ord_intrnl_dt AS "Auction Date",
+    FO.ord_market_code AS "Market Code",
+    FO.ord_contract_code as "Contract code",
+    I."Initiator ID",
+    I."Initiator Name",
+    FO.ord_location AS "Location",
+    FO.ord_tm_id AS "CMID",
+    RM.org_nm AS "Bidder Name",
+    FO.ord_ord_price AS "Lowest Price",
+    FO.ord_ord_qty AS "Quantity",
+    FO.ord_auction_short_code AS "Product Name",
+    coalesce(FO.ord_paramvalue11,'') AS "Product Description",
+    FO.ord_remarks AS "Auction Description",
+    FO.ord_status AS "Order Status",
+    COUNT(*) OVER (PARTITION BY FO.ord_auction_ord_no) AS "Bid Count",
+    coalesce(EM.error,'') AS "Rejection Reason"
+FROM (
+    SELECT
+        ord_contract_code, ord_auction_ord_no, ord_unique_number, ord_ord_intrnl_dt,
+        ord_market_code, ord_location, ord_tm_id, ord_ord_price, ord_ord_qty,
+        ord_auction_short_code, ord_paramvalue11, ord_remarks, ord_status,
+        ord_rej_reason, ord_ord_exch_dt, ord_ord_type
+    FROM fo_orders  
+    UNION ALL
+    SELECT
+        ord_contract_code, ord_auction_ord_no, ord_unique_number, ord_ord_intrnl_dt,
+        ord_market_code, ord_location, ord_tm_id, ord_ord_price, ord_ord_qty,
+        ord_auction_short_code, ord_paramvalue11, ord_remarks, ord_status,
+        ord_rej_reason, ord_ord_exch_dt, ord_ord_type
+    FROM fo_orders_purge_01feb2024 FOP
+    where NOT EXISTS (
+        SELECT 1 FROM fo_orders FO
+        WHERE FO.ord_unique_number = FOP.ord_unique_number
+    )
+) FO
+INNER JOIN registration_mstr RM ON FO.ord_tm_id = RM.org_id and rm.is_mock = 'F'
+LEFT JOIN errorcodes_mstr EM ON FO.ord_rej_reason = EM.errorcode
+LEFT JOIN (select
+    distinct
+        fo.ord_tm_id as "Initiator ID",
+    um.tm_name as "Initiator Name",
+    fo.ord_exch_ord_no
+from
+    (
+    select
+        ord_tm_id,
+        ord_exch_ord_no
+    from
+        fo_orders
+    where
+        ord_ord_type = 'AO'
+union all
+    select
+        ord_tm_id,
+        ord_exch_ord_no
+    from
+        fo_orders_purge_01feb2024
+    where
+        ord_ord_type = 'AO'
+    ) fo
+inner join tm_mstr um on
+    fo.ord_tm_id = um.tm_id) I on I.ord_exch_ord_no = FO.ord_auction_ord_no
+WHERE
+    FO.ord_market_code in (select ord_market_code from markets_04062025 )
+    AND FO.ord_ord_intrnl_dt BETWEEN '11/01/2025'::DATE AND '02/28/2026'::DATE
+    AND FO.ord_ord_type = 'AB'
+   and FO.ord_contract_code <> 'MOCKKMF';
+
+
+19.
+please execute the queries on participant-masterv2_replica and provide the data.
+
+select rm.org_id,rm.org_nm,rm.communication_person_mobile_no,um.user_email,rm.registered_address from registration_mstr rm
+inner join user_mstr um on um.org_id=rm.org_id
+where rm.org_id in (select distinct tm_id from tm_market_mapping tmm where tmm.market_code='APOL') and rm.is_mock='F';
+
+
+20.
+queries on participant-masterv2_replica and provide the data.
+
+select rm.org_id,rm.org_nm,um.user_mobile,um.user_email,rm.registered_address from registration_mstr rm
+inner join user_mstr um on um.org_id=rm.org_id
+where rm.org_id in (select distinct tm_id from tm_market_mapping tmm where tmm.market_code='AFTB') and rm.is_mock='F';
+
+
+21.
+execute query after approval on auctionv2eplica.
+
+WITH trade_summary AS (
+    SELECT
+        order_id,
+        CASE WHEN COUNT(CASE WHEN trd_is_approved = 'T' THEN 1 END) > 0
+             THEN 'Approved'
+             ELSE 'Rejected'
+        END as approval_status
+    FROM trade_mstr
+    GROUP BY order_id
+)
+select
+ord_unique_number as "Auction Id",
+ord_ord_intrnl_dt::date as "Auction Date",
+rm.org_nm  as "Organization Name",
+        fo.ord_ord_price as "Auction Price",
+        fo.ord_ord_qty as "Auction Qty",
+        fo.ord_comm_code as "Commodity",
+        fo.ord_paramvalue8 as "Season",
+        coalesce(ts.approval_status,' ') as "Bid Approved/Rejected",
+        tm.last_fill_price as "Trade Price",
+        tm.last_fill_qty as "Trade Qty",
+        tm.last_fill_value as "Trade Value"
+from fo_orders fo
+inner join registration_mstr rm on rm.org_id = fo.ord_tm_id and rm.is_mock ='F'
+left join trade_mstr tm on fo.ord_exch_ord_no = tm.order_id
+left join trade_summary ts on fo.ord_exch_ord_no = ts.order_id
+where ord_status not in ('UPLOAD','INVALID')
+and ord_ord_type ='AO' and fo.ord_market_code='BRBN' order by ord_ord_intrnl_dt::date;
+
+22.
+participant-masterv2_replica schema.
+
+SELECT
+    um.user_id AS "USER ID",
+    rm.org_nm AS "FIRM NAME",
+    COALESCE(um.user_mobile, 'NA') AS "MOBILE NUMBER",
+    COALESCE(um.user_email, 'NA') AS "MAIL ID",
+    COALESCE(rm.gst_number, 'NA') AS "GST NUMBER"
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+    ON um.org_id = rm.org_id
+INNER JOIN tm_market_mapping tmm
+    ON rm.org_id = tmm.tm_id
+WHERE
+    (tmm.market_code IN ('APPK'))
+    AND rm.is_mock = 'F'
+GROUP BY
+    um.user_id,
+    rm.org_nm,
+    um.user_mobile,
+    um.user_email,
+    rm.gst_number;
+
+
+23.
+data from participant-masterv2_replica schema.
+
+SELECT
+um.user_id AS "USER ID",
+um.org_id as "ORG ID",
+rm.org_nm AS "FIRM NAME",
+rm.registered_address,
+COALESCE(um.user_mobile, 'NA') AS "MOBILE NUMBER",
+COALESCE(um.user_email, 'NA') AS "MAIL ID"
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+ON um.org_id = rm.org_id
+WHERE
+rm.org_id in (select tm_id from tm_market_mapping where market_code in (
+select market_code from market_mstr where market_code in ('GJFP',
+'NCGB','RFGB','KLGB','NCGB','KLGB','NCGU','NCGU','KLGB','NSGB','TSG1','NCGU','TSG1',
+'NCGU','NCGU','NCGU','GJFP','GJCO','GJPT','APGB','GJFP','MPGB','GJPT','KGUN','JVKA',
+'HBSU','TSGB','JVKA','APUG','MHGB','TLGB','TMFG','KLGB','TMFG','MHGB','NSCK','GSSC',
+'GSSC','GJPT')))
+AND rm.is_mock = 'F' and rm.registered_state_code in ('TS','KL','KA','AP','TN');
+
+
+24.
+provide the data from participant-masterv2_replica schema.
+
+SELECT
+um.user_id AS "User ID",
+um.org_id as "ORG ID",
+rm.org_nm AS "Organization Name",
+COALESCE(um.user_mobile, 'NA') AS "Contact Number",
+COALESCE(um.user_email, 'NA') AS "Email ID",
+rm.pan_card AS "PAN Number",
+rm.gst_number AS "GST Number",
+rm.registered_address,
+rm.sales_executive_name as "Relationship Manager"
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+ON um.org_id = rm.org_id
+WHERE
+rm.org_id in (select tm_id from tm_market_mapping where market_code in (
+select market_code from market_mstr where market_code ='NCCS'))
+AND rm.is_mock = 'F';
+
+
+25.
+below query on auctionv2eplica after approval and provide data.
+
+select
+ord_auction_short_code as "Auction ID",
+ord_bidding_start_time::date as "Auction Date",
+ord_comm_code as "Commodity",
+ord_state_name as "State" ,
+ord_paramvalue5 as "Warehouse",
+ord_ord_qty as "Auction Qty",
+ord_ord_price as "Auction Price"
+from
+fo_orders fo
+inner join registration_mstr rm on
+rm.org_id = fo.ord_tm_id
+and rm.is_mock = 'F'
+where
+ord_market_code = 'CWBG'
+and ord_ord_type = 'AO'
+and ord_status not in ('UPLOAD','INVALID','PLAN')
+order by "Auction Date";
+
+
+26.
+auctionv2replica schema.
+
+@Anand Ganapathy Sir, As discussed PFA data with Commodities column.
+
+select
+    ao.global_client as "Department",
+    ao.ord_state_name as "State",
+    case
+        when ao.ord_ord_intrnl_dt::date between '2022-04-01' and '2023-03-31' then '2022-23'
+        when ao.ord_ord_intrnl_dt::date between '2023-04-01' and '2024-03-31' then '2023-24'
+        when ao.ord_ord_intrnl_dt::date between '2024-04-01' and '2025-03-31' then '2024-25'
+    end as "Financial Year",
+    string_agg(distinct coalesce(ao.ord_comm_nm,ao.ord_comm_code), ', ') as "Commodities",
+    sum(case when tm.trd_is_approved = 'T' then tm.last_fill_qty else 0 end) as "Total Traded Quantity",
+    sum(case when tm.trd_is_approved = 'T' then tm.last_fill_value else 0 end) as "Total Traded Value"
+from
+    fo_orders ao
+left join trade_mstr tm on
+    tm.order_id = ao.ord_exch_ord_no
+inner join registration_mstr rm on
+    ao.ord_tm_id = rm.org_id
+    and rm.is_mock = 'F'
+where
+    ao.ord_ord_type = 'AO'
+    and ao.ord_status not in ('INVALID', 'UPLOAD', 'CNL')
+    and ao.ord_ord_intrnl_dt::date between '2022-04-01' and '2025-03-31'
+    and ao.ord_contract_code in ('BRYANIRICE','RWBRKRICGJ','CFEDJYRICE','CFEDKURRC','CFEDRWRCE','CFEDSURRIC','CHAMBARICE','CHAMBARICE','DEFABLRCE','DEFAHDRCE','DEFALHRCE','DEFAMDRCE','DEFAMRTRCE','DEFBAGRCE','DEFBDBRCE','DEFBDIRCE','DEFBHJRCE','DEFBIGRCE','DEFBKNRCE','DEFBRLRCE','DEFBTNRCE','DEFCMDRCE','DEFDHRRCE','DEFDLCRCE','DEFENERICE','DEFFZPRCE','DEFGWHRCE','DEFHSARCE','DEFJBPRCE','DEFJDPRCE','DEFJLNRCE','DEFJPURCE','DEFJSIRCE','DEFKOLRCE','DEFKRKRCE','DEFLKWRCE','DEFMEURCE','DEFNMKRCE','DEFPTHRCE','DEFROKRCE','DEFSUGRCE','DEFTMURCE','DEFUDPRCE','FRKWITHAP','APFRKERNZ1','APFRKERNZ2','APFRKERNZ3','CGMKFDFRK1','CGMKFDFRK2','CGMKFDFRK3','CGMKFDFRK4','CGMKFDFRK5','CGMKFDFRK6','CGMKFDFRK7','CGMKFDFRK8','CGMKFDFRK9','CGMFDFRK10','CGMFDFRK11','CGMFDFRK12','CGMFDFRK15','CGMFDFRK20','CGMFDFRK25','CGMFDFRK28','CGMFDFRK30','CGMFDFRK35','CGMFDFRK50','FRKOUTFAP','FEDRICEKER','MPSCSCFRK','FRKOUTFAP','FRKWITHAP','HAFEDRCEHR','HFEDRICEEG','HAFDRICENW','HAFEDRICE','HAFEDRICEE','HAFEDRICEY','IDBIMHRICE','IDBIRCDL','IDBIRICE','IDBIRICEDF','CFEDJYRICE','JAYARICE','JAYARICE','KFCFRRICEK','KFCSCRICE','KFCFRRICEK','KFCSMDRICE','KFSMDMRICE','KFSMDMRICE','CFEDKURRC','KURUVARICE','KURUVARICE','LVBTNRPP','LVBTNRRC','MATTARICE','APMRKUPRCR','MNDYCMNRCE','MPBROKRICE','MPRICE1121','MPSCSCFRK','MSCTDCRICE','OPILJYRICE','PMPOSHRICE','PNBRICMDPA','PVTRCEMHEN','PVTRCEMHYK','CFEDRWRCE','RAWRICE','LVBTNRPP','LVBTNRRC','RAWRICE','CFEDSURRIC','DEFBIGRCE','DEFGWHRCE','DEFENERICE','DEFABLRCE','DEFBTNRCE','DEFROKRCE','DEFAHDRCE','DEFJDPRCE','DEFALHRCE','DEFFZPRCE','DEFDHRRCE','DEFAMRTRCE','DEFBDBRCE','DEFJLNRCE','DEFBKNRCE','DEFBAGRCE','DEFUDPRCE','DEFSUGRCE','DEFCMDRCE','DEFTMURCE','DEFLKWRCE','DEFBHJRCE','DEFJSIRCE','DEFJPURCE','DEFAMDRCE','DEFDLCRCE','DEFKOLRCE','DEFHSARCE','DEFKRKRCE','DEFBDIRCE','DEFJBPRCE','DEFMEURCE','DEFNMKRCE','DEFBRLRCE','DEFPTHRCE','HAFDRICENW','HAFEDRCEHR','HAFEDRICE','HAFEDRICEE','HAFEDRICEY','HFEDRICEEG','IDBIRICEDF','IDBIRICE','IDBIRCDL','IDBIMHRICE','RICEEXPORT','KARBNKRICE','KFCSMDRICE','SUPLCORICE','KFCSCRICE','SBIDARICE','PVTRCEMHEN','PVTRCEMHYK','APMRKUPRCR','MNDYCMNRCE','MSCTDCRICE','REVRICE','FWDRICE','FWDHYBRICE','REVHYBRICE','NRCK20HRML','OPILJYRICE','MPRICE1121','PNBRICMDPA','PMPOSHRICE','SAELRICE','SBITNRICE','TSCSCRICE','MPBROKRICE','SUGANDHARC','NRCK20HRML','KARBNKRICE','SAELRICE','SBIDARICE','SBITNRICE','SUGANDHARC','SUPLCORICE','SUREKHARICE','TSCSCRICE')
+group by 1, 2, 3
+order by 1, 2, 3;
+
+
+27.
+please provide the data from the auctionv2replica production schema.
+
+Dear Team,
+Following data is for the first data request.
+1) Kindly share the list of 183 members registered along with their State Name.
+
+--Query
+WITH ValidCommodities AS (
+    SELECT DISTINCT
+        fo.ord_comm_code
+    FROM fo_orders fo
+    LEFT JOIN registration_mstr rm
+        ON fo.ord_tm_id = rm.org_id
+    WHERE fo.ord_market_code IN (
+        'BHEW', 'IFAB', 'JBEW', 'JBG1', 'JBK1',
+        'JBP1', 'JBW1', 'JFEB', 'JFTE', 'JHB1',
+        'TKEW', 'TSKE', 'TSUE', 'VCLU'
+    )
+    AND fo.ord_contract_code IN (
+        'EHPWSRBHEW', 'IFABEWASTE', 'JBLFDEWSTE',
+        'EWASTEJBG1', 'EWASTEJBK1', 'EWASTEJBP1',
+        'EWASTEJBW1', 'JBLEWSTEKR', 'JFWLTEWST',
+        'EWASTEJHB1', 'TKEWSTLOT', 'TSKEEWMT',
+        'TSKEEWSET', 'TSRTCEWNOS', 'TSKEEWKIT',
+        'TSRTCKE', 'TSKEEWKITS', 'TSRTCEWKG',
+        'TSRTCEWLTR', 'TSUEEWKIT', 'TSRTCEWSNO',
+        'TSRTCEWSKG', 'TSUEEWSET', 'TSUEEWMT',
+        'TSUEEWKITS', 'SCPEWVCLU'
+    )
+    AND rm.is_mock = 'F'
+),
+BuyerDetails AS (
+    SELECT DISTINCT
+        mapping_ref.ord_comm_code,
+        tm.tm_id,
+        rm.org_nm,
+        rm.registered_state_code
+    FROM (
+        SELECT DISTINCT
+            ord_market_code,
+            ord_comm_code
+        FROM fo_orders
+    ) mapping_ref
+    INNER JOIN "participant-masterv2_replica".tm_market_mapping tm
+        ON mapping_ref.ord_market_code = tm.market_code
+    INNER JOIN registration_mstr rm
+        ON tm.tm_id = rm.org_id
+    WHERE tm.side = 'B'
+      AND rm.is_mock = 'F'
+      AND tm.market_code IN (
+          'BHEW', 'IFAB', 'JBEW', 'JBG1', 'JBK1',
+          'JBP1', 'JBW1', 'JFEB', 'JFTE', 'JHB1',
+          'TKEW', 'TSKE', 'TSUE', 'VCLU'
+      )
+),
+CommodityDescriptions AS (
+    SELECT
+        fo.ord_comm_code,
+        STRING_AGG(
+            DISTINCT TRIM(fo.ord_remarks),
+            ', '
+        ) AS description
+    FROM fo_orders fo
+    WHERE fo.ord_remarks IS NOT NULL
+    GROUP BY fo.ord_comm_code
+)
+SELECT
+    vc.ord_comm_code AS "Types of E-waste auctioned through NeML",
+    cd.description AS "Description",
+    bd.tm_id AS "TM ID",
+    bd.org_nm as "Organisation Name",
+    sm.state_name as "State Name"
+FROM ValidCommodities vc
+LEFT JOIN BuyerDetails bd
+    ON vc.ord_comm_code = bd.ord_comm_code
+LEFT JOIN CommodityDescriptions cd
+    ON vc.ord_comm_code = cd.ord_comm_code
+left join state_master sm on sm.state_code=bd.registered_state_code
+ORDER BY
+    vc.ord_comm_code,
+    bd.tm_id;
+
+
+28.
+please provide the data from the auctionv2replica production schema.
+
+Dear Team,
+Following data is for the second data request.
+2) for the Value Rs 4.18 crs enclosed pls share the commodity codes, description  as i need the break up
+
+--Query
+WITH OrderTotals AS (
+    SELECT
+        fo.ord_comm_code,
+        --fo.ord_ord_price * fo.ord_ord_qty AS auction_order_value,
+        fo.ord_remarks,
+        fo.ord_auction_short_code,
+        fo.ord_ord_value AS auction_order_value,
+        fo.ord_ord_qty as auction_order_qty,
+        fo.ord_contract_code ,
+        fo.ord_contract_nm
+    FROM fo_orders fo
+    LEFT JOIN registration_mstr rm
+        ON fo.ord_tm_id = rm.org_id
+    WHERE fo.ord_market_code IN (
+        'BHEW', 'IFAB', 'JBEW', 'JBG1', 'JBK1',
+        'JBP1', 'JBW1', 'JFEB', 'JFTE', 'JHB1',
+        'TKEW', 'TSKE', 'TSUE', 'VCLU'
+    )
+    AND fo.ord_contract_code IN (
+        'EHPWSRBHEW', 'IFABEWASTE', 'JBLFDEWSTE',
+        'EWASTEJBG1', 'EWASTEJBK1', 'EWASTEJBP1',
+        'EWASTEJBW1', 'JBLEWSTEKR', 'JFWLTEWST',
+        'EWASTEJHB1', 'TKEWSTLOT', 'TSKEEWMT',
+        'TSKEEWSET', 'TSRTCEWNOS', 'TSKEEWKIT',
+        'TSRTCKE', 'TSKEEWKITS', 'TSRTCEWKG',
+        'TSRTCEWLTR', 'TSUEEWKIT', 'TSRTCEWSNO',
+        'TSRTCEWSKG', 'TSUEEWSET', 'TSUEEWMT',
+        'TSUEEWKITS', 'SCPEWVCLU'
+    )
+    AND rm.is_mock = 'F' and fo.ord_ord_type = 'AO'
+)
+SELECT
+    ot.ord_comm_code AS "Types of E-waste auctioned through NeML",
+    nccm.cc_comm_desc as "Commodity description",
+    ot.ord_contract_code as "Contract Code",
+    nccm.cc_contract_desc as "Contract Description",
+    ot.ord_remarks as "Auction Remarks",
+    ot.ord_auction_short_code,
+    ot.auction_order_value AS "Tentative Value",
+    ot.auction_order_qty AS "Tentative Quantity"
+FROM OrderTotals ot
+left join ns_comm_contract_mst nccm on nccm.cc_contract_code=ot.ord_contract_code
+ORDER BY ot.ord_comm_code,ot.ord_contract_code;
+
+
+29.
+participant-masterv2_replica after approval and provide data.
+@Shrikant Patel as discussed, we have included ('SP','SSCP','MSCP','AIO') as membership types and also verified email Id's.
+
+select distinct
+user_id as "USER ID",
+rm.org_id,
+org_name as "FIRM NAME",
+user_mobile as "MOBILE NUMBER",
+CASE
+WHEN user_email IN ('askus@neml.in', 'askus@ncdexspot.com') THEN cm_client_email
+ELSE user_email
+END as "MAIL ID",
+rm.gst_number as "GST NUMBER"
+from
+user_mstr um
+inner join registration_mstr rm on
+rm.org_id = um.org_id
+left join trading_account ta on
+ta.cm_cm_id = rm.org_id
+where
+rm.is_mock = 'F'
+and membership_type in ('SP',
+'SSCP',
+'MSCP',
+'AIO')
+and registered_state_code = 'GJ'
+and org_name not like '%SURRENDER%'
+and um.org_id in (
+select distinct tm_id
+from
+tm_market_mapping tmm
+where
+market_code in (
+select market_code
+from
+market_mstr
+where
+global_client in ('NAFED',
+'NCCF')))
+
+
+30.
+please provide the data from the sugarpgprd schema.
+
+select
+fo.ord_market_code as "MARKET CODE",
+fo.ord_comm_code as "COMMODITY CODE",
+case when fo.ord_market_type='EM' then 'Auction Forward' when fo.ord_market_type='CM' then 'Continuous Market' end as "MARKET TYPE",
+case when fo.ord_ord_side='S' then 'SELL' when fo.ord_ord_side='B' then 'BUY' END as "ORDER SIDE",
+sum(case when tm.trd_is_approved = 'T' then tm.last_fill_qty else 0 end) as "APPROVED QTY",
+fo.ord_qty_unit as "QTY UNIT",
+count(1) as "NO OF AUCTION EVENTS" from fo_orders fo
+inner join registration_mstr rm on
+    fo.ord_tm_id = rm.org_id
+    and rm.is_mock = 'F'
+    left join trade_mstr tm on
+    tm.order_id = fo.ord_exch_ord_no
+where
+    fo.ord_ord_type in ('LO','AO')
+    and fo.ord_status not in ('INVALID', 'UPLOAD', 'CNL')
+    and fo.ord_ord_intrnl_dt::date between '2022-04-01' and '2025-03-31'
+    and fo.ord_market_code in ('SU','HBSU') group by 1,2,3,4,6 order by 1,2,3,4,6;
+
+
+
+31.
+please provide the data from the auctionv2replica schema.
+
+select  
+fo.ord_paramvalue7 as "NAFED COMMODITY CODE",
+fo.ord_paramvalue8 as "SEASON",
+fo.ord_market_code as "MARKET CODE",
+fo.ord_qty_unit as "Qty Unit",
+sum(fo.ord_ord_qty) as "Total Auctioned Qty",
+COALESCE(SUM(ptm.conf_qty) FILTER (WHERE ptm.status = 'CONF'), 0) AS "Total Confirmed Qty"
+from fo_orders fo
+inner join market_mstr mm on mm.market_code=fo.ord_market_code
+left join provisional_trade_mstr ptm on fo.ord_exch_ord_no = ptm.auction_order_no
+inner join registration_mstr rm on rm.org_id = fo.ord_tm_id
+where ord_ord_type ='AO'
+and ord_bidding_end_time::date between '2026-05-01' and '2026-06-16'
+and fo.ord_status not in ('UPLOAD', 'INVALID', 'PLAN', 'CNLS')
+and ord_paramvalue7||ord_paramvalue8 in ('GROUNDNUTK 25','MASOORR 24','MOONGS 25','URADK 25')
+and ord_market_code in ('NSUP','NFUP')
+group by 1,2,3,4;
+
+
+32.
+ approval, please provide the data from the specified schema with file name as provided.
+
+--participant-masterv2_replica
+--List of participants who have an NCCF global client
+select org_id ,org_nm  from registration_mstr rm where rm.is_mock ='F' and rm.org_nm not like '%SURRENDER%' and rm.org_nm not like '%MOCK%' and org_id in (
+select tm_id from tm_market_mapping tmm where market_code in (
+select market_code from market_mstr mm where global_client = 'NCCF'));
+
+--auctionv2replica
+--List of participants who have participated in NCCF auctions
+select org_id ,org_nm  from registration_mstr rm where rm.is_mock ='F' and rm.org_nm not like '%SURRENDER%' and rm.org_nm not like '%MOCK%' and org_id in (
+select ord_tm_id from fo_orders where ord_ord_type ='AB' and
+ord_market_code in (select market_code from market_mstr mm where global_client ='NCCF')
+);
+
+--auctionv2replica
+--List of participants whose bids were approved
+select distinct rm.org_id ,rm.org_nm from fo_orders fo
+inner join registration_mstr rm on fo.ord_tm_id =rm.org_id and rm.is_mock ='F'
+inner join market_mstr mm on mm.market_code =fo.ord_market_code and mm.global_client ='NCCF'
+inner join trade_mstr tm on fo.ord_token_id  = tm.token_id
+where ord_ord_type ='AB' and tm.trd_is_approved='T' and rm.org_nm not like '%SURRENDER%' and rm.org_nm not like '%MOCK%';
+
+--auctionv2replica
+--List of participants whose bids were rejected
+select distinct rm.org_id ,rm.org_nm from fo_orders fo
+inner join registration_mstr rm on fo.ord_tm_id =rm.org_id and rm.is_mock ='F'
+inner join market_mstr mm on mm.market_code =fo.ord_market_code and mm.global_client ='NCCF'
+inner join trade_mstr tm on fo.ord_token_id  = tm.token_id
+where ord_ord_type ='AB' and tm.trd_is_approved!='T' and rm.org_nm not like '%SURRENDER%' and rm.org_nm not like '%MOCK%';
+
+
+33. from participant-masterv2_replica schema.
+
+SELECT
+um.user_id AS "User ID",
+um.org_id as "ORG ID",
+rm.org_nm AS "Organization Name",
+COALESCE(um.user_mobile, 'NA') AS "Contact Number",
+COALESCE(um.user_email, 'NA') AS "Email ID",
+rm.pan_card AS "PAN Number",
+rm.gst_number AS "GST Number",
+rm.registered_address
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+ON um.org_id = rm.org_id
+WHERE
+rm.org_id in (select tm_id from tm_market_mapping where market_code in (
+select market_code from market_mstr where market_code in ('NSCH','NSTL')))
+AND rm.is_mock = 'F' AND UPPER(rm.org_nm) NOT LIKE '%SURRENDER%' AND UPPER(rm.org_nm) NOT LIKE '%TEST%'
+AND UPPER(rm.org_nm) NOT LIKE '%MOCK%';
+
+
+34.
+data from the auctionv2replica schema.
+
+WITH daily_bids AS (
+    -- 1. Count of bids from 11:00 AM to 11:45 AM per day
+    SELECT
+        ord_created_dt::date AS auction_date,
+        COUNT(*) AS max_bids_11_to_1145
+    FROM fo_orders
+    WHERE ord_ord_type = 'AB'
+    and global_client ='NAFED'
+      AND ord_created_dt::date >= '2025-01-01'
+      AND ord_created_dt::time >= '11:00:00'
+      AND ord_created_dt::time <= '11:45:00'
+    GROUP BY ord_created_dt::date
+),
+last_5_min_bids AS (
+    -- 2. Count of bids in the last 5 minutes (11:40 AM to 11:45 AM) per day
+    SELECT
+        ord_created_dt::date AS auction_date,
+        COUNT(*) AS max_bids_last_5_min
+    FROM fo_orders
+    WHERE ord_ord_type = 'AB'
+    and global_client ='NAFED'
+      AND ord_created_dt::date >= '2025-01-01'
+      AND ord_created_dt::time >= '11:40:00'
+      AND ord_created_dt::time <= '11:45:00'
+    GROUP BY ord_created_dt::date
+),
+concurrent_bids AS (
+    -- 3. Max concurrent bids (bids placed in the exact same second) per day
+    SELECT
+        auction_date,
+        MAX(bids_per_second) AS max_concurrent_bids
+    FROM (
+        SELECT
+            ord_created_dt::date AS auction_date,
+            date_trunc('second', ord_created_dt) AS bid_second,
+            COUNT(*) AS bids_per_second
+        FROM fo_orders
+        WHERE ord_ord_type = 'AB'
+        and global_client ='NAFED'
+          AND ord_created_dt::date >= '2025-01-01'
+        GROUP BY ord_created_dt::date, date_trunc('second', ord_created_dt)
+    ) sub
+    GROUP BY auction_date
+)
+SELECT
+    ROW_NUMBER() OVER (ORDER BY d.auction_date ASC) AS "Sr No",
+    d.auction_date AS "Date of auction",
+    d.max_bids_11_to_1145 AS "Maximum count of bids received in NAFED from 11 am to 11.45 am",
+    COALESCE(l5.max_bids_last_5_min, 0) AS "Maximum count of bids received in the last 5 minutes",
+    COALESCE(cb.max_concurrent_bids, 0) AS "Count of Maximum concurrent bids received(bids/sec)"
+FROM daily_bids d
+LEFT JOIN last_5_min_bids l5
+    ON d.auction_date = l5.auction_date
+LEFT JOIN concurrent_bids cb
+    ON d.auction_date = cb.auction_date
+ORDER BY d.auction_date ASC;
+
+
+35.
+
+@devops After approval, please provide the data from the participant-masterv2_replica schema.
+
+SELECT
+    um.user_id AS "User ID",
+    um.org_id AS "ORG ID",
+    rm.org_nm AS "Organization Name",
+    COALESCE(um.user_mobile, 'NA') AS "Contact Number",
+    COALESCE(um.user_email, 'NA') AS "Email ID",
+    rm.pan_card AS "PAN Number",
+    rm.gst_number AS "GST Number",
+    rm.registered_address AS "Registered Address",
+    COALESCE(sm.state_name , 'NA') AS "State",
+    STRING_AGG(DISTINCT tmm.market_code, ', ') AS "Allocated Market Codes"
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+    ON um.org_id = rm.org_id
+INNER JOIN tm_market_mapping tmm
+    ON tmm.tm_id = rm.org_id
+inner join state_master sm on sm.state_code=rm.registered_state_code
+WHERE
+    tmm.market_code IN ('BHEL', 'BHEP', 'ONES', 'TRTC', 'TSKE', 'TSUE')
+    AND rm.is_mock = 'F'
+    AND UPPER(rm.org_nm) NOT LIKE '%SURRENDER%'
+    AND UPPER(rm.org_nm) NOT LIKE '%TEST%'
+    AND UPPER(rm.org_nm) NOT LIKE '%MOCK%'
+GROUP BY
+    um.user_id,
+    um.org_id,
+    rm.org_nm,
+    um.user_mobile,
+    um.user_email,
+    rm.pan_card,
+    rm.gst_number,
+    rm.registered_address,
+    sm.state_name
+ORDER BY
+    rm.org_nm;
+
+
+
+36.
+--auctionv2replica
+WITH FilteredOrders AS (
+    SELECT
+        ord_exch_ord_no,
+        ord_tm_id,
+        ord_market_code,
+        ord_bidding_start_time,
+        ord_qty_unit,
+        ord_ord_qty
+    FROM fo_orders
+    WHERE ord_ord_type = 'AO'
+        AND ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL', 'CNLS')
+        AND ord_bidding_start_time >= '2023-04-01'
+        AND ord_bidding_start_time < '2026-04-01'
+    UNION ALL
+    SELECT
+        ord_exch_ord_no,
+        ord_tm_id,
+        ord_market_code,
+        ord_bidding_start_time,
+        ord_qty_unit,
+        ord_ord_qty
+    FROM FO_ORDERS_bkp_20260723
+    WHERE ord_ord_type = 'AO'
+        AND ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL', 'CNLS')
+        AND ord_bidding_start_time >= '2023-04-01'
+        AND ord_bidding_start_time < '2026-04-01'
+),
+CombinedTrades AS (
+    SELECT order_id, last_fill_qty, last_fill_value, trd_is_approved FROM trade_mstr
+    UNION ALL
+    SELECT order_id, last_fill_qty, last_fill_value, trd_is_approved FROM trade_mstr_bkp_20260723
+),
+BaseData AS (
+    SELECT
+        CASE
+            WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) <= 3
+                THEN (EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1) || '-' || TO_CHAR(fo.ord_bidding_start_time, 'YY')
+            ELSE EXTRACT(YEAR FROM fo.ord_bidding_start_time) || '-' || TO_CHAR(fo.ord_bidding_start_time + INTERVAL '1 year', 'YY')
+        END AS fy,
+        mm.global_client,
+        fo.ord_qty_unit,
+        fo.ord_ord_qty,
+        tm.last_fill_qty,
+        tm.last_fill_value,
+        tm.trd_is_approved
+    FROM FilteredOrders fo
+    INNER JOIN market_mstr mm
+        ON mm.market_code = fo.ord_market_code
+        AND mm.global_client IN ('NAFED', 'NCCF', 'KERALA CIVIL SUPPLY CO','CGSCSCL', 'MP MARKFED', 'AP CIVIL SUPPLIES', 'AP MARKFED')
+    INNER JOIN registration_mstr rm
+        ON rm.org_id = fo.ord_tm_id
+        AND rm.is_mock = 'F'
+    INNER JOIN CombinedTrades tm
+        ON fo.ord_exch_ord_no = tm.order_id
+)
+SELECT
+    fy AS financial_year,
+    global_client,
+    ord_qty_unit AS qty_unit,
+    SUM(ord_ord_qty) AS auction_ord_qty,
+    SUM(last_fill_qty) AS trade_qty,
+    SUM(last_fill_value) AS trade_value,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_qty ELSE 0 END) AS approved_qty,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_value ELSE 0 END) AS approved_trade_value
+FROM BaseData
+GROUP BY 1, 2, 3
+ORDER BY 2, 1, 3;
+
+--ncdfiprd21
+WITH BaseData AS (
+    SELECT
+        CASE
+            WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) <= 3
+                THEN (EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1) || '-' || TO_CHAR(fo.ord_bidding_start_time, 'YY')
+            ELSE EXTRACT(YEAR FROM fo.ord_bidding_start_time) || '-' || TO_CHAR(fo.ord_bidding_start_time + INTERVAL '1 year', 'YY')
+        END AS fy,
+        rm.org_nm,
+        fo.ord_qty_unit,
+        fo.ord_ord_qty,
+        tm.last_fill_qty,
+        tm.last_fill_value,
+        tm.trd_is_approved
+    FROM fo_orders fo
+    INNER JOIN trade_mstr tm
+        ON fo.ord_exch_ord_no = tm.order_id
+    INNER JOIN registration_mstr rm
+        ON rm.org_id = fo.ord_tm_id
+        AND rm.is_mock = 'F'
+    WHERE fo.ord_ord_type = 'AO'
+        AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL', 'CNLS')
+        AND fo.ord_contract_code IN (SELECT contract_code FROM data_request_contract_temp)
+        and fo.ord_bidding_start_time::date between '2023-04-01' and '2026-03-31'
+)
+SELECT
+    fy AS financial_year,
+    org_nm,
+    ord_qty_unit as qty_unit,
+    SUM(ord_ord_qty) AS auction_ord_qty,
+    SUM(last_fill_qty) AS trade_qty,
+    SUM(last_fill_value) AS trade_value,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_qty ELSE 0 END) AS approved_qty,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_value ELSE 0 END) AS approved_trade_value
+FROM BaseData
+GROUP BY 1,2,3
+ORDER BY 2,1,3;
+
+--sugarpgprd
+WITH BaseData AS (
+    SELECT 
+        CASE
+            WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) <= 3 
+                THEN (EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1) || '-' || TO_CHAR(fo.ord_bidding_start_time, 'YY')
+            ELSE EXTRACT(YEAR FROM fo.ord_bidding_start_time) || '-' || TO_CHAR(fo.ord_bidding_start_time + INTERVAL '1 year', 'YY')
+        END AS fy,
+        rm.org_nm,
+        fo.ord_qty_unit,
+        fo.ord_ord_qty,
+        tm.last_fill_qty,
+        tm.last_fill_value,
+        tm.trd_is_approved
+    FROM fo_orders fo
+    INNER JOIN trade_mstr tm 
+        ON fo.ord_exch_ord_no = tm.order_id
+    INNER JOIN registration_mstr rm 
+        ON rm.org_id = fo.ord_tm_id 
+        AND rm.is_mock = 'F'
+    WHERE fo.ord_ord_type IN ('AO')
+        AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL', 'CNLS')
+        AND fo.ord_bidding_start_time::DATE BETWEEN '2023-04-01' AND '2026-03-31'
+        AND fo.ord_contract_code IN (
+            'HBLBBRSLNC', 'HBLBBRSSNC', 'HBLBRWLRNC', 'HBLBRWSLNC', 'HBLBRWSSNC',
+            'HBLM30LR', 'HBLM30MSSG', 'HBLM30NSLC', 'HBLM30NSSC', 'HBLM30SG',
+            'HBLM30SLC', 'HBLM30SLNC', 'HBLM30SLR', 'HBLM30SSC', 'HBLM30SSG',
+            'HBLM30SSNC', 'HBLM31LYC', 'HBLMOS30LY', 'HBLMOS30SL', 'HBLRYM30C',
+            'HBLRYS31C', 'HBLS30LR', 'HBLS30MSLC', 'HBLS30MSSC', 'HBLS30MSSG',
+            'HBLS30NSLC', 'HBLS30NSSC', 'HBLS30SG', 'HBLS30SLC', 'HBLS30SLNC',
+            'HBLS30SLR', 'HBLS30SSC', 'HBLS30SSG', 'HBLS30SSNC', 'HBLS31LYC',
+            'HBLSLNCS30', 'HBLSSNCM30', 'HBLSSNCS30', 'HBSGLM30C', 'HBSGLS30C',
+            'LY2526M31J', 'M30SGL2526', 'M31LRY2526', 'S30SGL2526', 'S31LRY2526',
+            'GOHANABGS', 'GOHANAJGR', 'GOHANAMLEX', 'GOHANAMLS', 'HAFDSUGARY',
+            'HAFEDBGS', 'HAFEDMOLAS', 'HAFEDMOLSS', 'HRSUGARF01', 'HRSUGARF02',
+            'HRSUGARF03', 'HRSUGARF04', 'HRSUGARF05', 'HRSUGARF06', 'HRSUGARF07',
+            'HRSUGARF08', 'HRSUGARF09', 'HRSUGARF10', 'HRSUGARF11', 'HRSUGARF12',
+            'HRYDRSUGAR', 'JINDBGS', 'JINDJGR', 'JINDMLEX', 'JINDMLS', 'KAITHALBGS',
+            'KAITHALJGR', 'KAITHALMLS', 'KAITHLMLEX', 'KARNALBGS', 'KARNALJGR',
+            'KARNALMLEX', 'KARNALMLS', 'MEHAMBGS', 'MEHAMJGR', 'MEHAMMLEX',
+            'MEHAMMLSS', 'NARAINGMLS', 'NARAINJGR', 'PALWALBGS', 'PALWALJGR',
+            'PALWALMLEX', 'PALWALMLS', 'PANIPATBGS', 'PANIPATJGR', 'PANIPATMLS',
+            'PANIPTMLEX', 'ROHTAKBGS', 'ROHTAKDRS', 'ROHTAKJGR', 'ROHTAKMLEX',
+            'ROHTAKMLS', 'SHABADMLEX', 'SHAHABADEX', 'SHAHBADJGR', 'SHAHBADMLS',
+            'SONIPATBGS', 'SONIPATJGR', 'SONIPATMLS', 'SONIPTMLEX', 'HBLBROWSUR',
+            'HBLHDPEBG', 'HBLMSTSUGL', 'HBLMSTSUGS', 'HBLSGRXPRT', 'HBLSUGAR',
+            'HBLSUGEXP', 'HBLSUGREXP', 'HBLSUGSCRP', 'PBSUGARF01', 'PBSUGARF02',
+            'PBSUGARF03', 'PBSUGARF04', 'PBSUGARF05', 'PBSUGARF06', 'PBSUGARF07',
+            'PBSUGARF08', 'PBSUGARF09'
+        )
+)
+SELECT 
+    fy AS financial_year,
+    org_nm,
+    ord_qty_unit AS qty_unit,
+    SUM(ord_ord_qty) AS auction_ord_qty,
+    SUM(last_fill_qty) AS trade_qty,
+    SUM(last_fill_value) AS trade_value,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_qty ELSE 0 END) AS approved_qty,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_value ELSE 0 END) AS approved_trade_value
+FROM BaseData
+GROUP BY 1,2,3
+ORDER BY 2,1,3;
+
+--tradeaucprd
+WITH BaseData AS (
+    SELECT
+        CASE
+            WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) <= 3
+                THEN (EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1) || '-' || TO_CHAR(fo.ord_bidding_start_time, 'YY')
+            ELSE EXTRACT(YEAR FROM fo.ord_bidding_start_time) || '-' || TO_CHAR(fo.ord_bidding_start_time + INTERVAL '1 year', 'YY')
+        END AS fy,
+        rm.org_nm,
+        fo.ord_qty_unit,
+        fo.ord_ord_qty,
+        tm.last_fill_qty,
+        tm.last_fill_value,
+        tm.trd_is_approved
+    FROM fo_orders fo
+    INNER JOIN trade_mstr tm
+        ON fo.ord_exch_ord_no = tm.order_id
+    INNER JOIN registration_mstr rm
+        ON rm.org_id = fo.ord_tm_id
+        AND rm.is_mock = 'F'
+    WHERE fo.ord_ord_type IN ('AO')
+        AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL', 'CNLS')
+        AND fo.ord_bidding_start_time::DATE BETWEEN '2023-04-01' AND '2026-03-31'
+        AND fo.ord_contract_code IN (
+            'ALSRPACKER', 'ALSRPACKSL', 'ANAKPACKER', 'ANAKPACKSL', 'ANANPACKER',
+            'ANANPACKSL', 'ANNAPACKER', 'ANNAPACKSL', 'AOFDLCAOLC', 'APCMTRAOBT',
+            'APCMTRAOCA', 'APCMTRAOCB', 'APCMTRAOCC', 'APCMTRAOCD', 'APCMTRAOHC',
+            'APCMTRAOLB', 'APCMTRAOMF', 'APCMTRAOPB', 'APCMTRAOPF', 'APCMTRAOTI',
+            'APMFDTBBIP', 'APMFDTBOML', 'APMFDTBOMP', 'APMFDTBRTL', 'APMFGRDNML',
+            'APMRKUPPLG', 'APMRKUPRCG', 'APMRKUPSPG', 'APMRKUPTMG', 'APSCPLPLZ1',
+            'APSCPLPLZ2', 'APSCPLPLZ3', 'APSCPLPLZ4', 'APSCPLPLZ5', 'APSCPLPLZ6',
+            'APSCRICEPK', 'APSCSGSUZ1', 'APSCSGSUZ2', 'APSCSGSUZ3', 'APSCSGSUZ4',
+            'APSCSGSUZ5', 'APSCSGSUZ6', 'APSCSLTASA', 'APSCSTRANS', 'APSCSTRTZ1',
+            'APSCSTRTZ2', 'APSCSTRTZ3', 'APSCSTRTZ4', 'APSCSTRTZ5', 'APSCSTRTZ6',
+            'APSCTRAAMY', 'APSCTRAANT', 'APSCTRAASR', 'APSCTRABPT', 'APSCTRACHT',
+            'APSCTRAELU', 'APSCTRAESG', 'APSCTRAKDP', 'APSCTRAKND', 'APSCTRAKNL',
+            'APSCTRAKRS', 'APSCTRAKSM', 'APSCTRANDL', 'APSCTRANLO', 'APSCTRANTR',
+            'APSCTRAPKM', 'APSCTRAPVP', 'APSCTRASKM', 'APSCTRASSD', 'APSCTRATRP',
+            'APSCTRAVZG', 'APSCTRAWGD', 'APSFLRFLZ1', 'APSFLRFLZ2', 'APSFLRFLZ3',
+            'APSFLRFLZ4', 'APSFLRFLZ5', 'APSFLRFLZ6', 'APSGJGSUZ1', 'APSGJGSUZ2',
+            'APSOILPGZ1', 'APSOILPGZ2', 'APSOILPGZ3', 'APSOILPGZ4', 'APSOILPGZ5',
+            'APSOILPGZ6', 'APSPLSPLZ1', 'APSPLSPLZ2', 'APSPLSPLZ3', 'APSPLSPLZ4',
+            'APSPLSPLZ6', 'BAPAPACKER', 'BAPAPACKSL', 'BAPATARPSL', 'BOMNDLFDTR',
+            'CHITPACKER', 'CHITPACKSL', 'EASTPACKER', 'EASTPACKSL', 'ELURPACKER',
+            'ELURPACKSL', 'ELURTARPSL', 'GUNTPACKER', 'GUNTPACKSL', 'KADAPACKER',
+            'KADAPACKSL', 'KAKIPACKER', 'KAKIPACKSL', 'KIRSTARPAL', 'KIRSTARPSL',
+            'KONAPACKER', 'KONAPACKSL', 'KONATARPSL', 'KRISPACKER', 'KRISPACKSL',
+            'KURNPACKER', 'KURNPACKSL', 'MANYPACKER', 'MANYPACKSL', 'NANDPACKER',
+            'NANDPACKSL', 'NDLFEEDTRR', 'NDLFEEDTRS', 'NDLMOLSTRS', 'NDLMOLTRR',
+            'NDLMOLTRS', 'NELLPACKER', 'NELLPACKSL', 'NELLTARPSL', 'NTRDPACKSL',
+            'NTRRPACKSL', 'NTTRPACKER', 'PALNPACKER', 'PALNPACKSL', 'PRAKPACKER',
+            'PRAKPACKSL', 'SATYPACKER', 'SATYPACKSL', 'SRIKPACKER', 'SRIKPACKSL',
+            'TIRUPACKER', 'TIRUPACKSL', 'TPTITARPSL', 'VERMICELLI', 'VISAPACKER',
+            'VISAPACKSL', 'VIZIPACKER', 'VIZIPACKSL', 'WESTPACKER', 'WESTPACKSL',
+            'WESTTARPSL'
+        )
+)
+SELECT
+    fy AS financial_year,
+    org_nm,
+    ord_qty_unit AS qty_unit,
+    SUM(ord_ord_qty) AS auction_ord_qty,
+    SUM(last_fill_qty) AS trade_qty,
+    SUM(last_fill_value) AS trade_value,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_qty ELSE 0 END) AS approved_qty,
+    SUM(CASE WHEN trd_is_approved = 'T' THEN last_fill_value ELSE 0 END) AS approved_trade_value
+FROM BaseData
+GROUP BY 1,2,3
+ORDER BY 2,1,3;
+
+
+37.
+--Order Book 1 January 2026 to 31 March 2026
+SELECT
+    FO.ORD_CREATED_DT,
+    FO.ORD_COMM_CODE,
+    FO.ORD_AUCTION_SHORT_CODE,
+    FO.ORD_TRD_ACC_NO,
+    FO.ORD_ORD_SIDE,
+    FO.ORD_PRICE_UNIT,
+    FO.ORD_QTY_UNIT,
+    FO.ORD_ORD_PRICE,
+    FO.ORD_ORD_QTY,
+    FO.ORD_PENDING_QTY,
+    FO.ORD_ORD_VALUE,
+    FO.ORD_STATUS,
+    AB.RK AS BID_RANK,
+    EM.ERROR,
+    FO.ORD_MARKET_CODE,
+    FO.ORD_CONTRACT_CODE,
+    FO.ORD_INTERNAL_ORD_NO,
+    FO.ORD_EXCH_ORD_NO,
+    FO.ORD_UNIQUE_NUMBER,
+    FO.ORD_TM_ID,
+    FO.ORD_DEALER_ID,
+    FO.ORD_ORD_TYPE,
+    FO.ORD_PRICINGDATE,
+    FO.ORD_DELIVERYMODE,
+    FO.ORD_LOCATION,
+    FO.ORD_PARAMVALUE4,
+    FO.ORD_PARAMVALUE5,
+    FO.ORD_PARAMVALUE6,
+    FO.ORD_PARAMVALUE7,
+    FO.ORD_PARAMVALUE8,
+    FO.ORD_PARAMVALUE9,
+    FO.ORD_PARAMVALUE10,
+    FO.ORD_PARAMVALUE11,
+    FO.ORD_PARAMVALUE12,
+    FO.ORD_PARAMVALUE13,
+    FO.ORD_MATCH_QTY,
+    FO.ORD_MIN_BID_QTY,
+    FO.GLOBAL_CLIENT,
+    FO.ORD_STA,
+    FO.ORD_BIDDING_START_TIME,
+    FO.ORD_BIDDING_END_TIME
+FROM FO_ORDERS FO
+LEFT JOIN (
+    SELECT
+        FO_AB.ORD_INTERNAL_ORD_NO,
+        CASE
+            WHEN FO_AB.ORD_ORD_SIDE = 'B' THEN 'H'
+            WHEN FO_AB.ORD_ORD_SIDE = 'S' THEN 'L'
+        END
+        ||
+        RANK() OVER (
+            PARTITION BY FO_AB.ORD_AUCTION_ORD_NO
+            ORDER BY
+                CASE
+                    WHEN FO_AB.ORD_STATUS IN ('FILL', 'PFILL') THEN 1
+                    WHEN FO_AB.ORD_STATUS = 'KNKOFF' THEN 1
+                    ELSE 2
+                END ASC,
+                CASE
+                    WHEN FO_AB.ORD_ORD_SIDE = 'B'
+                    THEN FO_AB.ORD_ORD_PRICE
+                END DESC,
+                CASE
+                    WHEN FO_AB.ORD_ORD_SIDE = 'S'
+                    THEN FO_AB.ORD_ORD_PRICE
+                END ASC,
+                FO_AB.ORD_ORD_QTY DESC,
+                FO_AB.ORD_ORD_EXCH_DT ASC
+        ) AS RK
+    FROM FO_ORDERS FO_AB
+    INNER JOIN TIME_SESSION_MAP TSM
+        ON FO_AB.ORD_TOKEN_ID = TSM.TOKEN_ID
+        AND TSM.SESSION_ID = 2
+        AND TSM.TOKEN_IS_LOADED = 'C'
+    WHERE FO_AB.ORD_ORD_TYPE = 'AB'
+      AND FO_AB.ORD_MARKET_TYPE = 'EM'
+      AND FO_AB.ORD_STATUS NOT IN ('REJ', 'REPLACE')
+      AND FO_AB.ORD_ORD_INTRNL_DT >=
+            '2026-01-01 00:00:00+05:30'
+      AND FO_AB.ORD_ORD_INTRNL_DT <
+            '2026-04-01 00:00:00+05:30'
+) AB
+    ON FO.ORD_INTERNAL_ORD_NO = AB.ORD_INTERNAL_ORD_NO
+LEFT JOIN PROVISIONAL_TRADE_MSTR PTM
+    ON FO.ORD_EXCH_ORD_NO = PTM.ORDER_ID
+LEFT JOIN ERRORCODES_MSTR EM
+    ON EM.ERRORCODE = FO.ORD_REJ_REASON
+WHERE FO.ORD_MARKET_TYPE = 'EM'
+  AND FO.ORD_STATUS NOT IN ('UPLOAD', 'INVALID')
+  AND FO.ORD_ORD_TYPE = 'AB'
+  AND FO.ORD_ORD_INTRNL_DT >=
+        '2026-01-01 00:00:00+05:30'
+  AND FO.ORD_ORD_INTRNL_DT <
+        '2026-04-01 00:00:00+05:30'
+  AND EXISTS (
+      SELECT 1
+      FROM REGISTRATION_MSTR RM
+      WHERE RM.ORG_ID = FO.ORD_TM_ID
+        AND RM.IS_MOCK = 'F'
+  )
+ORDER BY FO.ORD_ORD_EXCH_DT DESC;
+
+
+--Order Book 2 April 2026 to 31 July 2026
+SELECT
+    FO.ORD_CREATED_DT,
+    FO.ORD_COMM_CODE,
+    FO.ORD_AUCTION_SHORT_CODE,
+    FO.ORD_TRD_ACC_NO,
+    FO.ORD_ORD_SIDE,
+    FO.ORD_PRICE_UNIT,
+    FO.ORD_QTY_UNIT,
+    FO.ORD_ORD_PRICE,
+    FO.ORD_ORD_QTY,
+    FO.ORD_PENDING_QTY,
+    FO.ORD_ORD_VALUE,
+    FO.ORD_STATUS,
+    AB.RK AS BID_RANK,
+    EM.ERROR,
+    FO.ORD_MARKET_CODE,
+    FO.ORD_CONTRACT_CODE,
+    FO.ORD_INTERNAL_ORD_NO,
+    FO.ORD_EXCH_ORD_NO,
+    FO.ORD_UNIQUE_NUMBER,
+    FO.ORD_TM_ID,
+    FO.ORD_DEALER_ID,
+    FO.ORD_ORD_TYPE,
+    FO.ORD_PRICINGDATE,
+    FO.ORD_DELIVERYMODE,
+    FO.ORD_LOCATION,
+    FO.ORD_PARAMVALUE4,
+    FO.ORD_PARAMVALUE5,
+    FO.ORD_PARAMVALUE6,
+    FO.ORD_PARAMVALUE7,
+    FO.ORD_PARAMVALUE8,
+    FO.ORD_PARAMVALUE9,
+    FO.ORD_PARAMVALUE10,
+    FO.ORD_PARAMVALUE11,
+    FO.ORD_PARAMVALUE12,
+    FO.ORD_PARAMVALUE13,
+    FO.ORD_MATCH_QTY,
+    FO.ORD_MIN_BID_QTY,
+    FO.GLOBAL_CLIENT,
+    FO.ORD_STA,
+    FO.ORD_BIDDING_START_TIME,
+    FO.ORD_BIDDING_END_TIME
+FROM FO_ORDERS FO
+LEFT JOIN (
+    SELECT
+        FO_AB.ORD_INTERNAL_ORD_NO,
+        CASE
+            WHEN FO_AB.ORD_ORD_SIDE = 'B' THEN 'H'
+            WHEN FO_AB.ORD_ORD_SIDE = 'S' THEN 'L'
+        END
+        ||
+        RANK() OVER (
+            PARTITION BY FO_AB.ORD_AUCTION_ORD_NO
+            ORDER BY
+                CASE
+                    WHEN FO_AB.ORD_STATUS IN ('FILL', 'PFILL') THEN 1
+                    WHEN FO_AB.ORD_STATUS = 'KNKOFF' THEN 1
+                    ELSE 2
+                END ASC,
+                CASE
+                    WHEN FO_AB.ORD_ORD_SIDE = 'B'
+                    THEN FO_AB.ORD_ORD_PRICE
+                END DESC,
+                CASE
+                    WHEN FO_AB.ORD_ORD_SIDE = 'S'
+                    THEN FO_AB.ORD_ORD_PRICE
+                END ASC,
+                FO_AB.ORD_ORD_QTY DESC,
+                FO_AB.ORD_ORD_EXCH_DT ASC
+        ) AS RK
+    FROM FO_ORDERS FO_AB
+    INNER JOIN TIME_SESSION_MAP TSM
+        ON FO_AB.ORD_TOKEN_ID = TSM.TOKEN_ID
+        AND TSM.SESSION_ID = 2
+        AND TSM.TOKEN_IS_LOADED = 'C'
+    WHERE FO_AB.ORD_ORD_TYPE = 'AB'
+      AND FO_AB.ORD_MARKET_TYPE = 'EM'
+      AND FO_AB.ORD_STATUS NOT IN ('REJ', 'REPLACE')
+      AND FO_AB.ORD_ORD_INTRNL_DT >=
+            '2026-04-01 00:00:00+05:30'
+      AND FO_AB.ORD_ORD_INTRNL_DT <
+            '2026-08-01 00:00:00+05:30'
+) AB
+    ON FO.ORD_INTERNAL_ORD_NO = AB.ORD_INTERNAL_ORD_NO
+LEFT JOIN PROVISIONAL_TRADE_MSTR PTM
+    ON FO.ORD_EXCH_ORD_NO = PTM.ORDER_ID
+LEFT JOIN ERRORCODES_MSTR EM
+    ON ERRORCODE = FO.ORD_REJ_REASON
+INNER JOIN (
+    SELECT DISTINCT
+        ORG_ID
+    FROM REGISTRATION_MSTR
+    WHERE IS_MOCK = 'F'
+) RM
+    ON RM.ORG_ID = FO.ORD_TM_ID
+WHERE FO.ORD_MARKET_TYPE = 'EM'
+  AND FO.ORD_STATUS NOT IN ('UPLOAD', 'INVALID')
+  AND FO.ORD_ORD_TYPE = 'AB'
+  AND FO.ORD_ORD_INTRNL_DT >=
+        '2026-04-01 00:00:00+05:30'
+  AND FO.ORD_ORD_INTRNL_DT <
+        '2026-08-01 00:00:00+05:30'
+ORDER BY FO.ORD_ORD_EXCH_DT DESC;
+
+
+--Trade Book 1 January 2026 to 31 March 2026
+SELECT
+    FT.TRD_TRADE_DT,
+    FO.ORD_AUCTION_SHORT_CODE,
+    FT.TRD_TRADE_NO,
+    FO.ORD_COMM_CODE,
+    FT.TRD_PRICE_UNIT,
+    FT.TRD_QTY_UNIT,
+    FT.TRD_TRADE_QTY,
+    FT.TRD_TRADE_PRICE,
+    FT.TRD_TRADE_VALUE,
+    tm.TRADE_MARGIN,
+    FO.ORD_TM_ID,
+    FO.ORD_ORD_SIDE,
+    FO.ORD_CONTRACT_CODE,
+    FO.ORD_MARKET_CODE,
+    FO.ORD_DEALER_ID,
+    FO.ORD_TRD_ACC_NO,
+    CASE
+        WHEN FT.TRD_IS_RTSETT_DONE IN ('T', 'F')
+             AND tm.TRADE_MARGIN > 0
+            THEN 'BLOCKED'
+        WHEN FT.TRD_IS_RTSETT_DONE = 'R'
+             AND tm.TRADE_MARGIN > 0
+            THEN 'RELEASED'
+        ELSE 'NA'
+    END AS EMDSTATUS,
+    CASE
+        WHEN FT.TRD_IS_RTSETT_DONE = 'T'
+            THEN 'APPROVED'
+        WHEN FT.TRD_IS_RTSETT_DONE = 'R'
+            THEN 'REJECTED'
+        ELSE 'APPROVAL PENDING'
+    END AS WINERSTATUS,
+    FO.ORD_PRICINGDATE,
+    FO.ORD_DELIVERYMODE,
+    FO.ORD_LOCATION,
+    FO.ORD_PARAMVALUE4,
+    FO.ORD_PARAMVALUE5,
+    FO.ORD_PARAMVALUE6,
+    FO.ORD_PARAMVALUE7,
+    FO.ORD_PARAMVALUE8,
+    FO.ORD_PARAMVALUE9,
+    FO.ORD_PARAMVALUE10,
+    FO.ORD_PARAMVALUE11,
+    FO.ORD_PARAMVALUE12,
+    FO.ORD_PARAMVALUE13
+FROM FO_TRADES FT
+LEFT JOIN TOKEN_MSTR
+    ON TOKEN_MSTR.TOKEN_ID = FT.TRD_TOKEN_ID
+INNER JOIN trade_mstr tm
+    ON tm.execution_id = FT.TRD_TRADE_NO
+    AND tm.order_id = FT.TRD_EXCH_ORD_NO
+INNER JOIN FO_ORDERS FO
+    ON FO.ORD_EXCH_ORD_NO = FT.TRD_EXCH_ORD_NO
+WHERE
+    DATE(FT.TRD_TRADE_DT)
+        BETWEEN '2026-01-01 00:00:00+05:30'
+            AND '2026-03-31 00:00:00+05:30'
+    AND FT.TRD_MARKET_TYPE = 'EM'
+    AND EXISTS (
+        SELECT 1
+        FROM registration_mstr rm
+        WHERE rm.org_id = FO.ORD_TM_ID
+          AND rm.is_mock = 'F'
+    )
+ORDER BY FT.TRD_EXCH_DT DESC;
+
+--Trade Book 2 April 2026 to 31 July 2026
+SELECT
+    FT.TRD_TRADE_DT,
+    FO.ORD_AUCTION_SHORT_CODE,
+    FT.TRD_TRADE_NO,
+    FO.ORD_COMM_CODE,
+    FT.TRD_PRICE_UNIT,
+    FT.TRD_QTY_UNIT,
+    FT.TRD_TRADE_QTY,
+    FT.TRD_TRADE_PRICE,
+    FT.TRD_TRADE_VALUE,
+    TM.TRADE_MARGIN,
+    FO.ORD_TM_ID,
+    FO.ORD_ORD_SIDE,
+    FO.ORD_CONTRACT_CODE,
+    FO.ORD_MARKET_CODE,
+    FO.ORD_DEALER_ID,
+    FO.ORD_TRD_ACC_NO,
+    CASE
+        WHEN FT.TRD_IS_RTSETT_DONE IN ('T', 'F')
+             AND TM.TRADE_MARGIN > 0
+        THEN 'BLOCKED'
+        WHEN FT.TRD_IS_RTSETT_DONE = 'R'
+             AND TM.TRADE_MARGIN > 0
+        THEN 'RELEASED'
+        ELSE 'NA'
+    END AS EMDSTATUS,
+    CASE
+        WHEN FT.TRD_IS_RTSETT_DONE = 'T'
+        THEN 'APPROVED'
+        WHEN FT.TRD_IS_RTSETT_DONE = 'R'
+        THEN 'REJECTED'
+        ELSE 'APPROVAL PENDING'
+    END AS WINERSTATUS,
+    FO.ORD_PRICINGDATE,
+    FO.ORD_DELIVERYMODE,
+    FO.ORD_LOCATION,
+    FO.ORD_PARAMVALUE4,
+    FO.ORD_PARAMVALUE5,
+    FO.ORD_PARAMVALUE6,
+    FO.ORD_PARAMVALUE7,
+    FO.ORD_PARAMVALUE8,
+    FO.ORD_PARAMVALUE9,
+    FO.ORD_PARAMVALUE10,
+    FO.ORD_PARAMVALUE11,
+    FO.ORD_PARAMVALUE12,
+    FO.ORD_PARAMVALUE13
+FROM FO_TRADES FT
+INNER JOIN trade_mstr TM
+    ON TM.execution_id = FT.TRD_TRADE_NO
+    AND TM.order_id = FT.TRD_EXCH_ORD_NO
+INNER JOIN FO_ORDERS FO
+    ON FO.ORD_EXCH_ORD_NO = FT.TRD_EXCH_ORD_NO
+INNER JOIN (
+    SELECT DISTINCT
+        ORG_ID
+    FROM registration_mstr
+    WHERE IS_MOCK = 'F'
+) RM
+    ON RM.ORG_ID = FO.ORD_TM_ID
+WHERE FT.TRD_MARKET_TYPE = 'EM'
+  AND FT.TRD_TRADE_DT >= '2026-04-01 00:00:00+05:30'
+  AND FT.TRD_TRADE_DT < '2026-08-01 00:00:00+05:30'
+ORDER BY FT.TRD_EXCH_DT DESC;
+
+
+
+38.
+
+query on auctionv2replica and provide data after approval.
+
+WITH all_fo_orders AS (
+    SELECT * FROM fo_orders
+    UNION ALL
+    SELECT * FROM FO_ORDERS_bkp_20260723
+),
+all_trade_mstr AS (
+    SELECT * FROM trade_mstr
+    UNION ALL
+    SELECT * FROM trade_mstr_bkp_20260723
+)
+SELECT
+    fo.ord_unique_number AS "Auction Id",
+    rm.org_nm AS "Initiator name",
+    fo.ord_state_name AS "State",
+    fo.ord_bidding_start_time AS "Date and Time of Auction",
+    fo.ord_comm_nm AS "Commodity Name",
+    fo.ord_paramvalue5 AS "Warehouse",
+    fo.ord_location AS "Auction Location",
+    COALESCE(bc.bidder_count, 0) AS "No. of bidders",
+    fo.ord_ord_price AS "Auction Price",
+    fo.ord_ord_qty AS "Auction Qty",
+    COALESCE(tm.last_fill_qty, 0) AS "Approved Qty",
+    COALESCE(tm.last_fill_value, 0) AS "Trade Value",
+    COALESCE(tm.last_fill_price, 0) AS "Traded Price",
+    CASE
+        WHEN tm.trd_is_approved = 'T' THEN 'Approved'
+        ELSE 'Rejected'
+    END AS "Trade Approved"
+FROM all_fo_orders fo
+LEFT JOIN all_trade_mstr tm
+    ON fo.ord_exch_ord_no = tm.order_id
+INNER JOIN registration_mstr rm
+    ON fo.ord_tm_id = rm.org_id AND rm.is_mock = 'F'
+LEFT JOIN (
+    SELECT
+        ord_auction_ord_no,
+        COUNT(DISTINCT ord_trd_acc_no) AS bidder_count
+    FROM all_fo_orders
+    WHERE ord_ord_type = 'AB'
+      AND ord_contract_code IN ( 'SBIDEFDEL' ,'CBIMPSOYA' ,'PNBRMSEED' ,'SBICHANA' ,'SBICORENDR' ,'MHBANKDFLT' ,
+        'TURWHITE' ,'BOBMAIZE' ,'SBIPADDYDF' ,'IDBIMPMOON' ,'PNBRICMDPA' ,'BOBAPDFCHL' ,'LVBTNRPP'
+        ,'KRDFREDCHL' ,'IDBIMHCTBL' ,'SBIURAD' ,'PNBGRSRJDA' ,'IDBIDFGJ' ,'SBITNPDY' ,'SBIREDCHLY'
+        ,'SBITUR' ,'IDBITNPADY' ,'SBIGUARQTL' ,'SBIAPDFBEN' ,'IDBIRCDL' ,'HRGUARGUM' ,'IDBIRICEDF' ,
+        'IDBIMSRDEL' ,'PNBTAMAPDF' ,'BOBMPCHDL' ,'SBISORGHUM' ,'KVBCORINDR' ,'UPPNBMASOR')
+    GROUP BY ord_auction_ord_no
+) bc
+    ON fo.ord_exch_ord_no = bc.ord_auction_ord_no
+WHERE fo.ord_ord_type = 'AO'
+  AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL')
+  AND fo.ord_bidding_start_time >= '2024-04-01 00:00:00'
+  AND fo.ord_contract_code IN ( 'SBIDEFDEL' ,'CBIMPSOYA' ,'PNBRMSEED' ,'SBICHANA' ,'SBICORENDR' ,'MHBANKDFLT' ,
+    'TURWHITE' ,'BOBMAIZE' ,'SBIPADDYDF' ,'IDBIMPMOON' ,'PNBRICMDPA' ,'BOBAPDFCHL' ,'LVBTNRPP'
+    ,'KRDFREDCHL' ,'IDBIMHCTBL' ,'SBIURAD' ,'PNBGRSRJDA' ,'IDBIDFGJ' ,'SBITNPDY' ,'SBIREDCHLY'
+    ,'SBITUR' ,'IDBITNPADY' ,'SBIGUARQTL' ,'SBIAPDFBEN' ,'IDBIRCDL' ,'HRGUARGUM' ,'IDBIRICEDF' ,
+    'IDBIMSRDEL' ,'PNBTAMAPDF' ,'BOBMPCHDL' ,'SBISORGHUM' ,'KVBCORINDR' ,'UPPNBMASOR');
+
+
+
+39. ncdfiprd21
+--order book Sheet-1 April 2026 to 31 July 2026
+SELECT
+    FO.ORD_CREATED_DT as "Order Date",
+    FO.ORD_COMM_CODE as "Commodity Code",
+    FO.ord_auction_short_code as "Auction Short Code",
+    FO.ORD_TRD_ACC_NO as "TAC ID",
+    FO.ORD_ORD_SIDE as "Side",
+    FO.ORD_PRICE_UNIT as "Price Unit",
+    FO.ord_qty_unit as "Qty Unit",
+    FO.ORD_ORD_PRICE as "Price",
+    FO.ORD_ORD_QTY as "Qty",
+    FO.ORD_PENDING_QTY as "Pending Qty",
+    FO.ORD_ORD_VALUE as "Ord Value",
+    FO.ORD_STATUS as "Order Status",
+    EC.error as "Rejection Error",
+    FO.ORD_MARKET_CODE as "Market code",
+    FO.ORD_CONTRACT_CODE as "Contract Code",
+    FO.ORD_INTERNAL_ORD_NO as "Internal Ord No",
+    FO.ORD_EXCH_ORD_NO as "Exchange Ord No",
+    FO.ord_unique_number as "Unique No",
+    CASE
+        WHEN FO.ord_status IN ('PLAN', 'UPLOAD', 'CNL', 'OPNPND', 'FAILED') THEN 'NA'
+        WHEN FO.ord_status IN ('OPEN', 'FILL', 'PFILL') AND OM.margin_percentage > 0 THEN 'Blocked'
+        WHEN FO.ord_status IN ('OPEN', 'FILL', 'PFILL') AND (OM.margin_percentage IS NULL OR OM.margin_percentage <= 0) THEN 'NA'
+        WHEN FO.ord_status IN ('REJ', 'CNLS', 'REPLACE', 'KNKOFF') AND OM.margin_percentage > 0 THEN 'Released'
+        ELSE 'NA'
+    END as "EMD Status",
+    FO.ORD_TM_ID as "TM ID",
+    FO.ORD_DEALER_ID as "Dealer ID",
+    FO.ORD_ORD_TYPE as "Order Type",
+    FO.ORD_PRICINGDATE as "Delivery end Date",
+    TM.PARAM_VALUE_2 as "Delivery Mode",
+    TM.PARAM_VALUE_3 as "Location",
+    FO.ord_paramvalue4 as "Param Value 4",
+    FO.ord_paramvalue5 as "ParamValue 5",
+    FO.ord_paramvalue6 as "Param Value 6",
+    FO.ord_paramvalue7 as "Param Value 7",
+    FO.ord_paramvalue8 as "Param Value 8",
+    FO.ord_paramvalue9 as "Param Value 9",
+    FO.ord_paramvalue10 as "Param Value 10",
+    FO.ord_paramvalue11 as "Param Value 11",
+    FO.ord_paramvalue12 as "Param Value 12",
+    FO.ord_paramvalue13 as "Param Value 13",
+    FO.ORD_MATCH_QTY as "MMQ",
+    FO.ORD_MIN_BID_QTY as "MBQ",
+    FO.UPDATED_H1QTY as "Updated Quantity",
+    FO.UPDATED_H1PRICE as "Updated Price",
+    FO.ORD_COUNTER_OFFER_QTY as "Counter Offer Quantity",
+    FO.ORD_COUNTER_OFFER_PRICE as "Counter Offer Price",
+    FO.ORD_IPADDRESS as "Ip Address"
+FROM (
+    SELECT * 
+    FROM fo_orders 
+    WHERE ORD_ORD_INTRNL_DT >= '2026-04-01 00:00:00'
+      AND ORD_ORD_INTRNL_DT < '2026-08-01 00:00:00'
+      AND ord_status NOT IN ('INVALID', 'UPLOAD')
+) FO
+INNER JOIN token_mstr TM 
+    ON FO.ord_token_id = TM.token_id
+LEFT JOIN errorcodes_mstr EC 
+    ON EC.errorcode = FO.ord_rej_reason::double precision
+LEFT JOIN order_mstr OM 
+    ON FO.ord_exch_ord_no::text = OM.order_id::text 
+    AND FO.ord_internal_ord_no::text = OM.client_order_id::text
+INNER JOIN fo_special_codes FSC 
+    ON FSC.sc_special_code::text = FO.ord_status::text 
+    AND FSC.sc_context = 'ORDER_STATUS' 
+    AND FSC.sc_status = 'A'
+LEFT JOIN TIME_SESSION_MAP TSM 
+    ON FO.ord_token_id = TSM.token_id 
+    AND TSM.TOKEN_IS_LOADED = 'C' 
+    AND TSM.TOKEN_SESSION_TYPE = 'BID'
+INNER join NS_COMM_CONTRACT_MST NS 
+    on NS.CC_CONTRACT_CODE = FO.ORD_CONTRACT_CODE
+	and NS.CC_MARKET_CODE = FO.ORD_MARKET_CODE and ns.is_mock='F'
+inner join registration_mstr rm on rm.org_id=fo.ord_tm_id and rm.is_mock='F' 
+WHERE 
+    (FO.ORD_ORD_TYPE != 'AB' OR TSM.token_id IS NOT NULL)
+    order by
+	FO.ORD_CREATED_DT desc;
+
+
+--Trade book Sheet-1 April 2026 to 31 July 2026
+SELECT 
+    TRD_TRADE_DT AS "Trade Date",
+    TOKEN_SHORT_CODE AS "Token Short Code",
+    TRD_TRADE_NO AS "Trade No",
+    TRD_COMM_CODE AS "Commodity code",
+    TRD_PRICE_UNIT AS "Price Unit",
+    TRD_QTY_UNIT AS "UOM",
+    TRD_TRADE_QTY AS "Trade Qty",
+    TRD_TRADE_PRICE AS "Trade Price",
+    TRADE_VALUE AS "Trade Value",
+    TRADE_VALUE_EXCLUDING_GST AS "Trade Value Excluding GST",
+    TRADE_MARGIN AS "Trade Margin",
+    TRD_TM_ID AS "TM ID",
+    TRD_SIDE AS "SIDE",
+    TRD_CONTRACT_CODE AS "Contract Code",
+    TRD_MARKET_CODE AS "Market code",
+    TRD_EXCH_ORD_NO AS "Exchange Ord No",
+    TRD_DEALER_ID AS "Dealer ID",
+    TRD_TRD_ACC_NO AS "TAC ID",
+    (CASE 
+        WHEN TRD_IS_RTSETT_DONE IN ('T','F') AND TRADE_MARGIN > 0 THEN 'Blocked' 
+        WHEN TRD_IS_RTSETT_DONE = 'R' AND TRADE_MARGIN > 0 THEN 'Released' 
+        ELSE 'NA' 
+    END) AS "Margin Status",
+    (CASE 
+        WHEN TRD_IS_RTSETT_DONE = 'T' THEN 'Approved' 
+        WHEN TRD_IS_RTSETT_DONE = 'R' THEN 'Rejected' 
+        ELSE 'Approval Pending' 
+    END) AS "Winner Status",
+    ORD_PRICINGDATE AS "Pricing Date",
+    ORD_DELIVERYMODE AS "Delivery Mode",
+    ORD_LOCATION AS "Location",
+    ORD_PARAMVALUE4 AS "Param Value 4",
+    ORD_PARAMVALUE5 AS "ParamValue 5",
+    ORD_PARAMVALUE6 AS "Param Value 6",
+    ORD_PARAMVALUE7 AS "Param Value 7",
+    ORD_PARAMVALUE8 AS "Param Value 8",
+    ORD_PARAMVALUE9 AS "Param Value 9",
+    ORD_PARAMVALUE10 AS "Param Value 10",
+    ORD_PARAMVALUE11 AS "Param Value 11",
+    ORD_PARAMVALUE12 AS "Param Value 12",
+    ORD_PARAMVALUE13 AS "Param Value 13",
+    ORD_AUCTION_TYPE AS "Auction Type",
+    (CASE 
+        WHEN ORD_AUCTION_TYPE = 'E' THEN ORD_ORD_QTY 
+        ELSE ORD_MATCH_QTY 
+    END) AS "MMQ",
+    (CASE 
+        WHEN ORD_AUCTION_TYPE = 'E' THEN ORD_ORD_QTY 
+        ELSE ORD_MIN_BID_QTY 
+    END) AS "MBQ",
+    ord_unique_number AS "Unique No",
+    TRD_EXCH_DT AS "Exchange Date",
+    ord_remarks AS "Description",
+    ord_ipaddress AS "Ip Address"
+FROM FO_TRADES 
+LEFT JOIN TOKEN_MSTR 
+    ON TOKEN_MSTR.TOKEN_ID = FO_TRADES.TRD_TOKEN_ID 
+INNER JOIN FO_TRADE_VW 
+    ON FO_TRADE_VW.TRADE_NO = FO_TRADES.TRD_TRADE_NO 
+    AND FO_TRADE_VW.ORDER_NO = FO_TRADES.TRD_EXCH_ORD_NO 
+INNER JOIN FO_ORDERS 
+    ON FO_ORDERS.ORD_EXCH_ORD_NO = FO_TRADES.TRD_EXCH_ORD_NO 
+INNER join NS_COMM_CONTRACT_MST NS 
+    on NS.CC_CONTRACT_CODE = FO_ORDERS.ORD_CONTRACT_CODE
+	and NS.CC_MARKET_CODE = FO_ORDERS.ORD_MARKET_CODE and ns.is_mock='F'
+inner join registration_mstr rm on rm.org_id=FO_ORDERS.ord_tm_id and rm.is_mock='F'
+WHERE 1=1 
+  AND DATE(TRD_TRADE_DT) between '2026-04-01 12:26:30.118+05:30'::date and '2026-07-31 12:26:30.118+05:30'::date
+  AND TRD_MARKET_TYPE = 'EM'
+ORDER BY TRD_EXCH_DT DESC;
+
+40.
+ the data from the sugarpgprd schema.
+
+SELECT
+um.user_id AS "User ID",
+um.org_id as "ORG ID",
+rm.org_nm AS "Firm Name",
+um.user_name as "Authorised Person Name",
+COALESCE(um.user_mobile, 'NA') AS "Contact Number",
+COALESCE(um.user_email, 'NA') AS "Email ID",
+rm.com_addrss,
+sm.state
+FROM registration_mstr rm
+INNER JOIN user_mstr um
+ON um.org_id = rm.org_id
+left join state_mstr sm on sm.state_code=rm.com_state
+WHERE
+rm.org_id in (select tm_id from tm_market_mapping where market_code in (
+select market_code from market_mstr where market_code in ('HRSF','HRML','HFSM','HRBG','HFML','PBSF')))
+AND rm.is_mock = 'F' AND UPPER(rm.org_nm) NOT LIKE '%SURRENDER%' AND UPPER(rm.org_nm) NOT LIKE '%TEST%'
+AND UPPER(rm.org_nm) NOT LIKE '%MOCK%';
+
+
+
+41.
+attached query on auctionv2replica schema and provide data after approval.
+
+  SELECT
+  fo.ord_qty_unit AS "Unit of Scrap Auction",
+    COUNT(DISTINCT fo.ord_auction_short_code) AS "No. of Scrap auction in FY26",
+    SUM(fo.ord_ord_qty) AS "Total quantity of scrap auction",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN tm.last_fill_value ELSE 0 END) / 10000000 AS "Total trade value (in Crores)"
+FROM
+    fo_orders fo
+LEFT JOIN
+    trade_mstr tm ON fo.ord_exch_ord_no = tm.order_id
+WHERE
+    fo.ord_ord_type = 'AO'
+    AND fo.ord_contract_code in (select cc_contract_code from scrapcontractcommodity)
+    AND fo.ord_bidding_start_time >= '2025-04-01 00:00:00'
+    AND fo.ORD_ORD_INTRNL_DT < '2026-04-01 00:00:00'
+    AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL') group by ord_qty_unit  ;
+
+
+
+42.
+
+WITH valid_bidders AS (
+    SELECT org_id 
+    FROM registration_mstr 
+    WHERE is_mock = 'F'
+),
+combined_orders AS (
+    SELECT ord_tm_id, ord_contract_code 
+    FROM fo_orders 
+    WHERE ord_ord_type = 'AB'
+    UNION ALL
+    SELECT ord_tm_id, ord_contract_code 
+    FROM fo_orders_all_purge_data 
+    WHERE ord_ord_type = 'AB'
+    UNION ALL
+    SELECT ord_tm_id, ord_contract_code 
+    FROM FO_ORDERS_bkp_20260723 
+    WHERE ord_ord_type = 'AB'
+),
+distinct_user_contracts AS (
+    SELECT DISTINCT o.ord_tm_id, o.ord_contract_code
+    FROM combined_orders o
+    INNER JOIN valid_bidders v 
+        ON o.ord_tm_id = v.org_id
+)
+SELECT
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('KFCSCRICE', 'DEFCMDRCE', 'DEFTMURCE', 'PMPOSHRICE', 'SUPLCORICE', 'MATTARICE', 'DEFLKWRCE', 'DEFBDIRCE', 'DEFJSIRCE', 'PNBRICMDPA', 'DEFJPURCE', 'DEFAMDRCE', 'DEFDLCRCE', 'SUREKHARICE', 'MNDYCMNRCE', 'HAFEDRCEHR', 'CFEDSURRIC', 'DEFKOLRCE', 'SBIDARICE', 'DEFBHJRCE', 'IDBIRICE', 'NRCK20HRML', 'DEFHSARCE', 'HAFDRICENW', 'DEFBIGRCE', 'DEFGWHRCE', 'CFEDJYRICE', 'DEFENERICE', 'DEFABLRCE', 'DEFBTNRCE', 'RWBRKRICGJ', 'LVBTNRPP', 'KFCFRRICEK', 'IDBIRICEDF', 'DEFROKRCE', 'DEFAHDRCE', 'JAYARICE', 'HAFEDRICE', 'DEFJDPRCE', 'KURUVARICE', 'DEFALHRCE', 'RAWRICE', 'CFEDRWRCE', 'KARBNKRICE', 'DEFFZPRCE', 'DEFDHRRCE', 'DEFAMRTRCE', 'SBITNRICE', 'APMFRICBN', 'DEFKRKRCE', 'BRYANIRICE', 'FWDHYBRICE', 'DEFBDBRCE', 'REVHYBRICE', 'DEFJLNRCE', 'IDBIRCDL', 'DEFBKNRCE', 'DEFBAGRCE', 'MPRICE1121', 'RICEEXPORT', 'DEFUDPRCE', 'HAFEDRICEE', 'HAFEDRICEY', 'DEFJBPRCE', 'DEFSUGRCE', 'REVRICE', 'FWDRICE', 'IDBIMHRICE', 'HFDRIBRN', 'SUGANDHARC', 'CHAMBARICE', 'PVTRCEMHEN', 'PVTRCEMHYK', 'MPBROKRICE', 'DEFMEURCE', 'DEFNMKRCE', 'DEFBRLRCE', 'SAELRICE', 'APMRKUPRCR', 'KFCSMDRICE', 'DEFPTHRCE', 'LVBTNRRC', 'MSCTDCRICE', 'OPILJYRICE', 'CFEDKURRC', 'TSCSCRICE', 'HFEDRICEEG', 'KFSMDMRICE') THEN ord_tm_id END) AS Rice_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('APMFDMZML', 'HAFEDMAZE', 'JWMAIZE', 'NCFMPMZK24', 'PVTMAZMHEN', 'NCFMHMZK24', 'PVTMZEMHEN', 'APMKFMAIZE', 'HAFEDMAIZE', 'YELWMZFPMP', 'HAFEDMAIZY', 'NCDEXMAIZE', 'NCKRMAIZE', 'KSSCHYBMZE', 'HFDMAIZE', 'WBFPOMAIZE', 'BIHARMAIZE', 'MPMAIZEYK', 'SPACMAIZE', 'MAIZEGLBG', 'APMMZMLK20', 'PVTMAZMHYK', 'APMFMAIZE', 'PVTMZEMHYK', 'TSMRKMAIZE', 'MAIZEGBAG', 'GSCSCMAIZE', 'APMMZMLR21', 'MPBOBMAIZE', 'BOBMAIZE', 'NCKRMAIZEY', 'NCKRMZYKBG') THEN ord_tm_id END) AS Maize_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('NGRR25MPML', 'APCHANADAL', 'UPCFCHANAF', 'SFACURADYK', 'NFDCHNATBK', 'NCHN20APML', 'KSMFCHANA', 'NFDCHNGJBK', 'NCHN24RJML', 'KFCMDMCHNA', 'NGRR21MPML', 'CGSCSC135', 'PSFCHR22MH', 'PSFCHR22RJ', 'MHMFDCHNYK', 'PSFCHR21GJ', 'VCMFCHNMHY', 'NCHN19MHML', 'NCHN20MHML', 'UPPNBCHANA', 'NFCHNTLML', 'NFDCHNMHY', 'NCHN18UPML', 'NCHN19MPML', 'NCHN23UPML', 'NCHN18GJML', 'NCHN19GJML', 'PSFCHR21MH', 'NFCHNR23TL', 'NFCHNR22TL', 'NFCHNR22AP', 'FCICHNMH19', 'PSFCHR20UP', 'SFCCHNYKPC', 'PSFCHR22GJ', 'FCICHNMH20', 'NAFDGRAMUP', 'SFACHNWYK', 'NGRK24CGML', 'PSFCHR20RJ', 'CGSCSCL120', 'CGSCSCL135', 'CGSCSCL140', 'PSFCHR21TL', 'PSFCHR23MH', 'NGRK25CGML', 'CGSCSCL165', 'NCHN23RJML', 'NCCFGRMUP', 'NCHN20GJML', 'NFAPTSBGEN', 'NCHN22UPML', 'PSFCHR19TL', 'PSFCHK23MH', 'PSFCHR23RJ', 'NFDCHNHR', 'NCFCRGRR25', 'CGSCSC140', 'NCFGJGRR25', 'NCHN24GJML', 'NFDGMBKUP', 'NFDCHNMHBK', 'NFDCHNRJBK', 'PSFCHR23KR', '140CGSCS35', 'NFDCHNGJ', 'NCHR21KRML', 'NCFRJGRR25', 'NCHN20KRML', 'NCFTLGRR25', 'RCMCHANA', 'NFBGLGMKRE', 'NFDBNGKABK', 'MMTCCHNYK', 'MPPTDCHNFD', 'MPCHWHYK', 'SFCURDYKPC', 'SFACURDWHL', 'NFDCHNMPY', 'NCFFGR26GJ', 'PVTCHNMHEN', 'SFCMNGKRYK', 'SFCMNGMHYK', 'SFCMNGMHWL', 'PSFCHR23TL', 'NFCHNR21TS', 'NCFFGR26MP', 'PSFCHR26MP', 'NCFFGR26RJ', 'NCFFGR26MH', 'NCFSGR26UP', 'NCFSGR26GJ', 'NFDCHNMP', 'NCFSGR26MP', 'NCFSGR26RJ', 'PSFCHR26AP', 'NCFSGR26CG', 'PSFCHR26GJ', 'PSFCHR26KA', 'PSFCHR26TS', 'PSFCHR26MH', 'PSFCHR26RJ', 'PSFCHR26UP', 'NCFSGR26MH', 'PSSCHR26CG', 'NCHR23KRML', 'NCFSGR26TS', 'PSSCHR26AP', 'PSSCHR26GJ', 'PSSCHR26HR', 'PSSCHR26UP', 'PSFCHR18MP', 'PSSCHR26MH', 'PSSCHR26KA', 'PSSCHR26MP', 'PSSCHR26RJ', 'NFDCHNMPBK', 'PSSCHR26TS', 'PVTCHNMHYK', 'CGSCSC120', 'PSFCHR18RJ', 'PSFCHR20AP', 'NCHN21RJML', 'KFCSCCHANA', 'NFDKBCMPYK', 'MMTCCHYMPC', 'FCICHANAYK', 'FCICHANAEL', 'NFCHNHRYML', 'NFDCHNGJEN', 'NCHN22RJML', 'NAFDAPTSBG', 'NCHN19UPML', 'NCHN19RJML', 'NCHN23GJML', 'SFACMONGYK', 'PSFCHR23AP', 'PSFCHR19GJ', 'NCHN18MPML', 'NCHR22KRML', 'NCHN21MHML', 'SBICHANA', 'NCFMPGRR25', 'NCHN20MPML', 'NCFKRCHR26', 'SFACTURWHL', 'CGSCSC165', 'SFACTURYK', 'PSFCHR20TL', 'NCHN20RJML', 'MPCHWHEN', 'NCFMPGRR24', 'NFCHNR23AP', 'FCICHNMH21', 'FCICHNMH22', 'MOKPCSGPSF', 'SFACMSRWHL', 'PSFCHR20GJ', 'NCHN22HRML', 'NCHN22MHML', 'NCHN23MHML', 'PSFCHR21AP', 'PSFCHR19MP', 'NCHN25GJML', 'MMTCCHNYM', 'MMTCCHYKPC', 'NCHN18MHML', 'PSFCHR20MH', 'PSFCHR19RJ', 'PSFCHR21RJ', 'PSFCHR22MP', 'NFMP', 'PSFCHK22MH', 'NGRR23MPML', 'PSFCHR23MP', 'NCHN19KRML', 'SFCTURYKPC', 'NGRR24MPML', 'NFDCHNMH', 'NCFMHGRR25', 'MMTCCHNWL', 'NFDKBCMPWL', 'PSFCHR20MP', 'SFCMNGKRWL', 'NCFMHGRR23', 'NCHN20UPML', 'MSCTDCHANA', 'NFCHNAPML', 'NFCHNR21AP', 'NCHN21GJML', 'NCHN22GJML', 'NGRR22MPML', 'PSFCHR20KR', 'PSFCHR21MP', 'NCHN18RJML', 'PSFCHR23UP', 'PSFCHR22AP', 'GSCHANDAL', 'NFBGLGRMKR', 'SBMFPOCOM', 'PSFCHR21KR', 'NFDCHNRJ', 'IDBIMPCHAN', 'KSMFCHANAY', 'MHMFDCHNEN', 'MOCKUP', 'CHANADAL', 'NFCHANBDAC', 'NFCHANHUCK', 'PVTCHNMH', 'PVTCHNMHYN', 'SBICHNKRDA', 'SFACHNWHL', 'SFACMONGWL', 'SFCMNGYKPC', 'UPCFCHANA', 'VCMFCHNMHE', 'MPPTDCHANA') THEN ord_tm_id END) AS Chana_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('NCFTNITR22', 'NCFGJTUK24', 'CEFDURIDAL', 'MPSCSCTWYK', 'GFMACSTUR', 'FCITURMH19', 'PFCLTK21MH', 'PMPOTURDVG', 'NDTR21KRFD', 'SLPKOZTRDL', 'NCFMPTUPSF', 'PMPOTURKLR', 'NFDTURMHWL', 'NFAPTSTREN', 'PSFTRB19AP', 'NFDTURMPYK', 'PMPOTURUK', 'NDTR21MPFD', 'NCFUPTOK24', 'PFCLTK21GJ', 'PSFTRK23AP', 'PFCLTK21TL', 'PFCLTK21KR', 'PFCLTK21MP', 'PMPOTURSMG', 'NFTURMHML', 'CLTK21GJ', 'PSFTRK16MH', 'CLTK21MH', 'NTRK19TSML', 'CLTK21TL', 'GSCSCTRDAL', 'CLTK21MP', 'NFDNMTWEN', 'BLKTURKLPU', 'PSFTRK18TL', 'SLPLKDTRDL', 'NDTR19MHFD', 'NTRO20MHML', 'PSFTRK23MH', 'PSFTRK21MH', 'PMPOTURTMK', 'NFTR19TNML', 'NFDNMTWYK', 'PSFTRK23KR', 'PSFTRK22KR', 'PSFTRK21GJ', 'PSFTRK19TL', 'NCFMHITR22', 'PMPOTURRMN', 'PMPODFSALT', 'NFDTURMHBK', 'NDTR17MHFD', 'MPSCSCTW', 'NCFAPTUK24', 'NTRO20KRML', 'NTRK24MPML', 'SLKOTYTRDL', 'PSFTRK19MH', 'PSFTRK21TL', 'NFDTURODML', 'NFTURMUMML', 'PMPOTURCHD', 'NFDTURMHYK', 'NTRK24UPML', 'PSFTRK19GJ', 'APPVTTURFD', 'PSFTRK22GJ', 'NTRK21APML', 'PMPOTURCKB', 'PMPOTURBU', 'NCFKRTUK24', 'NCFMHTUK24', 'SLTNDRTRDL', 'NFDTURGJYK', 'PSFTRK18GJ', 'NFDTURKRBK', 'PMPOTURBR', 'NTUR17KRML', 'NTUO20KRML', 'MFDMHTURBK', 'PMPOTURGAD', 'WDCWTURDAL', 'NDTR19APFD', 'PSFTRB19KR', 'GSCTURBKGJ', 'GSTURDAL', 'SLENKLTRDL', 'CLTK21KR', 'PSFTRK23GJ', 'NTRK24APML', 'PMPOTURDUD', 'PMPOTURDKG', 'FCSTURDKA', 'PMPOTURDCKM', 'PMPOTURDMS', 'NFDTURGJ19', 'PMPOTURDMD', 'NFDTURGJWL', 'PMPOTURDHS', 'PSFTRB19TL', 'PMPOTURDDK', 'PMPOTURDCMR', 'NTOK21MHML', 'CBIMPTUR', 'PMPOTURDAL', 'PVTRTLENRV', 'PVTTURMH', 'PMPOTURDVJR', 'PMPOTURDBD', 'PSFTRK18MP', 'FCITUREL', 'PSFTRK20KR', 'PMPOTURBAL', 'NTRO19MHML', 'PMPOTURBGV', 'NTOK25KRML', 'PMPOTURBDR', 'NTOK25TSML', 'NTOK25MHML', 'PMPOTURRCR', 'NTOK25GJML', 'NTOK25CGML', 'NAFEDTURTN', 'NTOK25ODML', 'PSFTRK19AP', 'NTRK20APML', 'PMPOTURBLK', 'NTRK20KRML', 'NTUR19GJML', 'PMPOTURHVR', 'PMPOTURKLG', 'NTUR18KRML', 'MMTCTURYM', 'MSCTDTURDL', 'PMPOTURKPL', 'MMTCTURYK', 'PMPOTURVPR', 'NTUR19KRML', 'PMPOTURYDG', 'NTOK20MHML', 'MSCTDCTUR', 'NTUR16MHML', 'KTAMLTUR', 'KSCMFTURYK', 'FCITURGJ19', 'PMPOTURMDG', 'NCFTLTUK24', 'KSPLTURDAL', 'PSFTRK19KR', 'NFTURMPML', 'NTRK20GJML', 'NTUR17GJML', 'NFTR19ODML', 'PSFTRK18TN', 'PSFTRK23TL', 'NTRK21TSML', 'MHMFDTURYK', 'NCFGJTUPSF', 'KFCPDSSALT', 'TUDLKTBNGI', 'PSFTRK17KR', 'KFCTURDAL', 'PSFTRK18MH', 'NTUR21KRML', 'MHMFDTUR', 'NTRK17MHML', 'PSFTRK17GJ', 'TUR16KRML', 'NTRK19MHML', 'PSFTRK17MH', 'PSFTRK18AP', 'NFDTURMPWL', 'NCFMPTRR23', 'FCITURYK', 'PVTURADMH', 'NFTK21TNML', 'PSFTRK18KR', 'NCFMHTOOR', 'NFDTURKRWL', 'NTRK21GJML', 'MFDTURDALY', 'NAFDATTOOR', 'NFTK20TNML', 'SBITUR', 'NDTR18GJFD', 'NFDTURKRYK', 'MFDTURDAL', 'NITR22MHFD', 'FCSTURDAL', 'NFDTURBKGJ', 'PSFTRK24AP', 'NDTR19KRFD', 'NFTURTNML', 'PVTTURMHEN', 'FTRK20GJML', 'FTRK21GJML', 'FTURK18KR', 'NFTURAPML', 'MMTCTURWL', 'KFCSCTURDL', 'MFDTURMHYK', 'MKFDTURMH', 'CFEDTURDAL', 'PVTTURKAR', 'KSCMTURMRY', 'TLGMKFTUR', 'KSCMFTUR', 'APRGDLRGZ6', 'APRGDLRGZ8', 'APRGDRGZ11', 'APMARKUPTD', 'APRGDLRGZ1', 'APRGDRGZ13', 'APRGDLRGZ2', 'APRGDLRGZ4', 'APRGDLRGZ5', 'APRGDRGZ10', 'HACATUR', 'HACAREDGRM', 'APMFDRDGMY', 'APREDGRAMD', 'NCKRRDGRAM', 'APRGDLRGZ9', 'RGDALSLBD', 'APRGDRGZ12', 'APRGDLRGZ3', 'APRGDLRGZ7', 'APMFDRDGM', 'APMFDRDML', 'KSSCRGM', 'PVTMYANKEE') THEN ord_tm_id END) AS TUR_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('NCFGJSBK24', 'MFDSYBNMH', 'PVTFSYMHEN', 'PVTFSYMHYK', 'CBIMPSOYA', 'NFDSOYAMH', 'NFDSOYAMHY', 'NCFMHSBK24', 'NCFMPSBK24', 'NFSYBNTLML', 'NCFCGSBK25', 'NFDSOYATL', 'KSSCSYBEAN', 'NSYB19KRML', 'MFDSYBNMHY', 'NFSYBNRJML', 'NCCFRJSYBN', 'NFDSOYARJ', 'MTCSOYBEAN', 'NSBK24TSML', 'NFDSOYAKRY', 'NCCFKRSOYB', 'NSYB24GJML', 'NCCFTLSYB', 'PSFSBK24TL', 'HFDSOYE', 'NSYK24KRML', 'NSYB24MHML', 'PVTSYBMHYK', 'PVTSYBMHEN', 'PVTSYBMHER', 'NSYK24CGML', 'KIROILSYBN', 'NSYB23TLML', 'NCKRSOYABN', 'NSYB23MHML', 'NSYB23GJML', 'PVTSYBMHYR', 'NFDSOYAKR', 'NSBK24RJML', 'BUCCNPAQTL', 'MPSOYABEAN', 'NSBK24MPML', 'NSYB19MHML', 'NSYB20MHML', 'PVTTLGNSB') THEN ord_tm_id END) AS Soybean_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('NCFGJMDR25', 'NMTR25MPML', 'NMST24RJML', 'HFDMUSAPMC', 'NFDMSTGJEN', 'NFDMSTRJBK', 'NFDMUSHRYK', 'HSWMUSREW', 'HSMUSTBULK', 'NCFRJMDR25', 'NCFCGMDR25', 'NMST19RJML', 'NMTD24MPML', 'NFDMSTDRJ', 'NFDMSTDRJE', 'NAFDMUSTHR', 'MUSTARDPKD', 'NFDMUSMPBK', 'NCCFMSTUP', 'HFMUSTARDY', 'NCFMPMDR25', 'NFDMSTMPBK', 'NFDMSTDUP', 'NCFHRMUR25', 'NFDMSTBKGJ', 'NFDMSTGJ', 'HAFEDMSRYK', 'NMST24GJML', 'HFDMUSHIS', 'HAFEDMSTRY', 'HAFEDMSTRE', 'NFDMSTDMP', 'HFDMSTRD25', 'HFDMUSTR22', 'NMST20GJML', 'NMSTDCGML', 'NFMU25ORML', 'HAFEDMBULK', 'NMTD23UPML', 'NMT20HRYML', 'NMST25ASML', 'MUSTARDKOZ', 'MUSTARDKTM', 'MUSTARDTVM', 'NMTD24UPML', 'HFMUSTARD', 'NMST23RJML', 'NMST24HRML', 'HFDBLKMU25', 'NMST19MPML', 'NCFMSTCG26', 'NFMSTDUPML', 'NFDMSTDWB', 'NFMT20UPML', 'NMST23HRML', 'NMTD20MPML', 'NMTD21MPML', 'NMST20RJML', 'NMST24ASML', 'NFDMSTDMPY', 'NMST23GJML', 'NMTD18MPML', 'HSMUSTARDY', 'NMST19GJML', 'NMTD23MPML', 'NMST25GJML', 'NMST23ASML', 'MPBOBMSEED', 'MUSTARDEKM') THEN ord_tm_id END) AS Mustard_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('NFDGNTMP', 'NFDGNTMPY', 'NFDGNUTKRE', 'KSSCGN', 'NGRD20UPML', 'NGRD21GJML', 'NFDGNUTUP', 'NGRD24RJML', 'SBRJGTPDMT', 'NFDGNRNWGJ', 'NGRD20GJML', 'NGRD20ODML', 'NGRN21ORML', 'NCKRGRDNTY', 'SBRJGTKKMT', 'NCCFKRGNUT', 'NFDGNNWGJ', 'CWCGRNTPOD', 'MOCKMWTEST', 'NGRN22ORML', 'NGRN23ORML', 'NFGRDRJML', 'NFDGNBKAP', 'NFDGNWBKGJ', 'NGRD16GJML', 'NFDGNUTOD', 'RAJFEDGPOD', 'NFDGNUTGJ', 'GUJPVTGNTE', 'GUJCOTGN', 'NGRD23UPML', 'NFGRDKRML', 'APSSDCGNUT', 'NCFGJGNK25', 'NCFRJGNK25', 'NFBLKGNTGJ', 'NFBLKGNTRJ', 'NGNK21RJML', 'APOILFGNUT', 'NCFTLGNK24', 'NGRD20APML', 'NGRD23RJML', 'NFGNGJK19E', 'GSCSCGRDNT', 'HAFEDGNUTY', 'PVTRDETULS', 'PVTTRADE', 'GUJPROGNUT', 'NCFUPGNK24', 'APMRKFGNUT', 'NCKRGRNDNT', 'HAFEDGNUTE', 'NCFGJGNK24', 'NGRD24UPML', 'NFDNGGBKGJ', 'NCCFRJGNUT', 'NFDGNBKGJ', 'NFDGNTMPBK', 'NFGRDGJML', 'NGRD19RJML', 'NGRD21UPML', 'NFDGNGJK19', 'NFDGNNGNGJ', 'SBRJGRDKNL', 'APMFGRDNML', 'NGRD20RJML', 'NGRD22RJML', 'NFGRDUPML', 'NFDGNEFGJ', 'NGRD19GJML', 'NFGNGNK18E', 'RCMGNPCHIT', 'NGRD18GJML', 'NGRD23GJML', 'NGRD24KRML', 'NFDGNUTKR', 'NGRD20KRML', 'APGNUTSEED', 'NCFTLGNK25', 'NGRD20HRML', 'NCFTLGNR25', 'NFDGNBKRJ', 'NFDGNUTRJ', 'NGRN24ORML', 'RCMGNBHINM', 'NFDGNUTGAJ', 'NGRD17GJML', 'LAMPGRDNUT', 'NGRD24GJML', 'NGRD22UPML', 'NFGRDMPML', 'NFDGNUTAP', 'NFGRDAPML', 'APOILFEDGP', 'RCMGNPHALO', 'GUJCOGNUTE', 'GUJCOMASOL') THEN ord_tm_id END) AS Groundnut_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('NCFMPURK22', 'PSFURK21MP', 'NAFKRURAD', 'NCFKRURK25', 'NCFGJURK25', 'NFDURDMPWL', 'NFDURDMPYK', 'NFURDAPML', 'NFUDMHK18E', 'MFDURDMHY', 'NFUDMHK18Y', 'NFDURDGJEN', 'FCIURDMH18', 'FCIURDMP18', 'NFDRJURDEN', 'NFURDUPML', 'NUR22TNMLR', 'NFURDWBML', 'MURK18MPML', 'PSFURK18AP', 'NURD22TNFD', 'NFDURDBKUP', 'PSFURK21RJ', 'NURD22RJML', 'PSFIMPURMH', 'NCFRJURK22', 'NFDURADUP', 'NCFUPURK22', 'NURK24RJML', 'NURD20MHML', 'NURD21MHML', 'NCFAPUDR25', 'NAFKRURADE', 'NURD19KRML', 'PSFURK21GJ', 'NFURDGJML', 'NURD21GJML', 'PSFURD22UP', 'PSFURK21MH', 'CEFDURADWL', 'PSFURK18RJ', 'FCIURDAP18', 'NUDR25APML', 'PVTURDMHEN', 'NURD21RJML', 'PSFURD21UP', 'NUDR25TNML', 'PSFURD22TN', 'MFDURDMH', 'NFDURADMHY', 'NCFMHURK24', 'FCIURADYK', 'NURD21MPML', 'MMTCURDWL', 'MFDURDMPEN', 'NUR22APMLR', 'FCITURKR18', 'FURDK18AP', 'FURDK18MH', 'NUR22MHMLR', 'NURD22MHML', 'NFDURADOD', 'NURR22TSML', 'PSFURR18RJ', 'NFDURDTND', 'NFURDKRML', 'NCFMPURR23', 'NCFTNURK24', 'MAHTURDAL', 'PNBURAD', 'MPURADWHEN', 'MPURADWHYK', 'NURD25KRML', 'NFUDGJK18E', 'NUR20ODHML', 'NURK25UPML', 'CBIMPURAD', 'NURD22MPML', 'NAFRJURAD', 'MMTCURDYK', 'CEFDURADAL', 'NFURDRJML', 'NURD19RJML', 'MSCURK18ML', 'NFDURADMH', 'NURD18GJML', 'NFURDGJK18', 'PSFURK18MP', 'NURD19MHML', 'PVTURADMH', 'NFDURADGJY', 'PSFURR18AP', 'NURD19GJML', 'MTCURAD', 'NFDURDBKGJ', 'NURD18MHML', 'NFURDMHML', 'NFURDTNML', 'NAFDTSURAD', 'NFURDMPML', 'NFDURDWB', 'NFDURDWBYK', 'FCIURADEL', 'RCMURAD', 'MSCTDURDDL', 'UPCFURAD', 'PSFURK21AS') THEN ord_tm_id END) AS Urad_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('GSCSCSUG1', 'DEFBKRSUG', 'DEFJSMSUG', 'DEFALBSUG', 'CGSUBLSPUR', 'DEFROKSUG', 'TSCSCSUGAR', 'MOCKCGSCSC', 'DEFNSBSUG', 'DEFAMRSUG', 'MAHSUGRS30', 'WBSUZONE_D', 'CGSURPUBST', 'HBLBROWSUR', 'WBSUZONE_A', 'DEFAMBSUG', 'GSS30SUGAR', 'DEFSUGSUG', 'DEFGWHSUG', 'BIDSUGARKR', 'MOCKHBL19', 'MYSUGAR', 'OTKRLSUGAR', 'WBSUZONE_E', 'OTSUGAR', 'CGSUDURG', 'DEFJBPSUG', 'HBLBRWSGLY', 'HBLSUGAR', 'HBLBRWSGSL', 'BIDSUGKRYK', 'DEFCMDSUG', 'GSCSCSUG4', 'HBLBBRSSNC', 'HBLM30SSG', 'HBLM30SG', 'HBLM30LR', 'HBLS30SG', 'HBLBRWLRNC', 'HBLS30MSSG', 'DEFJDPSUG', 'HBLSSNCS30', 'MHS30SUGAR', 'DEFDVLSUG', 'HBLS30MSSC', 'HBLBBRSLNC', 'HBLMOS30LY', 'HBLM30SSC', 'HBLSSNCM30', 'HBLS30SLNC', 'HBLBRWSLNC', 'BIDARSUGAR', 'DEFBBNSUG', 'DEFPUNSUG', 'HBLSUGEXP', 'KRLSUGAR', 'CFEDSUGAR', 'DEFHSASUG', 'JKHSUG50KG', 'WBSUZONE_C', 'DEFAGBSUG', 'DEFKOLSUG', 'DEFBRLSUG', 'DEFBKPSUG', 'DEFFZPSUG', 'HBLGUNNYBG', 'DEFDUNSUG', 'APCSCSUGAR', 'HBLM30SLNC', 'HBLS30NSLC', 'GSCSCSUG3', 'HBLS30SSG', 'DEFBDBSUG', 'WBSUZONE_B', 'DEFMRTSUG', 'HBLS30LR', 'HBLS30NSSC', 'CGSUSRGUJA', 'ANDNCBSUGR', 'DEFJNSSUG', 'DEFAHMSUG', 'DEFBHASUG', 'MHMCKSUGAR', 'JKHSUG1KG', 'DEFNMKSUG', 'HBLS30SSC', 'HBLM30SLC', 'HBLBRWSSNC', 'HBLHDPEBG', 'HBLM30NSLC', 'HBLM30NSSC', 'HBLM30MSSG', 'DEFBUJSUG', 'HBLS30SSNC', 'HBLS30MSLC', 'KFCSUGAR', 'HBLS30SLC', 'HBLSLNCS30', 'DEFPATSUG', 'HBLS30SLR', 'WBSUZONEA', 'HBLM30SSNC', 'TLSUGAR', 'GSCSCSUG2', 'SUGARAP', 'HBLMOS30SL', 'DEFAMDSUG', 'HBLM30SLR') THEN ord_tm_id END) AS Sugar_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('GCCCFEBEAN', 'IDBITNCOFF', 'KRCOFFEEBO', 'APGRCOFEBN', 'IDBITNUD', 'IDBITNUW', 'IDBITNDYCS', 'IDBITNRWCW', 'IDBITNTUR') THEN ord_tm_id END) AS Coffee_Bidder_count,
+    COUNT(DISTINCT CASE WHEN ord_contract_code IN ('RPSM2', 'SHAKTIPUMP', 'PLASTICBOX', 'OBSITMVCLU', 'JRRLPSCPNO', 'MAHDLMSRKG', 'HMSSCRAP', 'SCRPAAPUNT', 'SCRAPINKG', 'MHPTJSCPKG', 'TSRTCSULTR', 'MPMSSCRAP', 'DCMWASNM18', 'DCMWASNM28', 'DCMWASKG05', 'NCSSCRAPS', 'TATASCRPKG', 'AACTNSCPNO', 'KISASCRLOT', 'KISASCRNOS', 'MPSAKGSCRP', 'SAWFILSP18', 'WBSCRAP', 'GMDCNOS', 'SAWFILSP5', 'GMDCSCRVSF', 'GMDCUNIT1', 'ODSASCRPMT', 'TATASCRPNO', 'GENRLSCRAP', 'SCRAPKSPL', 'ODSASCRPNO', 'MAHDLMSRO5', 'TKSASCRPLT', 'EWASTEJBW1', 'MSTDLVLSCP', 'EX200TAMAC', 'MT18MPSA', 'APMSSCRAP', 'JFLBIKESWB', 'RPSM1', 'TOSHIBARC', 'RPSM3', 'SHOVELVCLU', 'SUJALSCRAP', 'HVYDMPVCLU', 'RITUSCRLOT', 'NMSCNOBHSC', 'NSCSHRITEM', 'VCLUSRPMT1', 'VPLSCRAPMT', 'RITUSCRNOS', 'ODSASCRPKG', 'VCLUSRPMT3', 'LNTMT', 'LNTNOS', 'BISASCRPKG', 'NMDCVE', 'BISASCRPLT', 'VCLUSRPMT4', 'CB5MTRVCLU', 'CB1MTRVCLU', 'RTCVIJBUSB', 'JBLNONEWKR', 'BRSCRPVCLU', 'CB1T5MVCLU', 'VCLUSRPMT5', 'VCLUSRPMT8', 'VCLUSRPUT1', 'VCRJSCRPTNO', 'CPCBSCVCLU', 'TRTCSUMT', 'VCLUSRPMT6', 'AUTOMCHSRP', 'POWAOSCPKG', 'MSHCACVCLU', 'MSSCRAPPCB', 'MSTNTSVCLU', 'VCLUSRPMT7', 'BALAJIMT18', 'HVVDPVCLU', 'RTCVIJBUBD', 'VCLUSRPLT1', 'TATASCRPLT', 'CNVBLTVCLU', 'MISSCRPBRI', 'RBMSSVCLU', 'ARSSIPL18M', 'VCLUSRPMT9', 'PROSCRPBRI', 'ARSSIPL18U', 'JBFEWSTMAH', 'CERSCPBLCE', 'MSEPSCRAP', 'GMDCLTR1', 'RBRSVCLU', 'TKSASCRPKG', 'TSSSCRAPBG', 'JBFEWSTJHK', 'VMSASCRAP', 'MSHSPVCLU', 'SWSASCRKG', 'JBFNEWSMAH', 'JBFNEWSJHK', 'SCPEWVCLU', 'MPSASWCSMT', 'GMDCMLOT', 'MBSRVNVCLU', 'RVSFSCRP18', 'PANIPATSRP', 'GJVPSCRPLT', 'IFABEWASTE', 'IFABNONEWS', 'MLSASCRPKG', 'SFKLTVCLU', 'MLSASCRPLT', 'VCRJFLTBGS', 'JRRLMSCPKG', 'TKEWSTLOT', 'WAPPRSCRAP', 'JUTECORP18', 'FBG4FTVCLU', 'MSYSCRAP18', 'SUTSVCLU', 'TSSSCRAPDM', 'ELEMOTMPMS', 'MSYSCRAP5', 'URTSVCLU', 'MPMS', 'NMDCKHO', 'NMDCRDS', 'MSPLSCPLOT', 'SRTSVCLU', 'TSSSCRAPLT', 'NMDCV', 'IELSHPITEM', 'TRTCSKMT', 'TRTCSUSET', 'TYRESVCLU', 'NEWSTEJBK2', 'MHSCRAPLOT', '600KVDGSET', 'JFEWSTRJ', 'TRTCSKSET', 'UPSRTCSCRP', 'SUSTSVCLU', 'CARDOORAAP', 'PMSASCRPNO', 'HVYSCRVCLU', 'JFNEWSTRJ', 'TYRES1VCLU', 'TRTCSUKIT', 'TRTCSKKITS', '100MTCRANE', 'RADHIKAEUT', 'TYRE2VCLU', 'SENTINISCP', 'NMDCSRPLOT', 'AACTNSCPMT', 'CRANE80MT', 'TUBINVEIND', 'MSBDELVCLU', 'RJPVTSCRMT', 'NSCKGMSCRP', 'SCRAPINNOS', 'RTCVIZBUBN', 'WELMCPMPSA', 'JBLEWSTEKR', 'SCRPVCMPSA', 'MSGHRSCRAP', 'BLMSSEAL', 'RTCVIZBUBS', 'APMSSCRAPM', 'WLCHNSCRKG', 'BLLMSEAL', 'WBKVYARNUT', 'MSTDCSCRAP', 'WLCHNSCRLT', 'WBKVYARNKG', 'BLPSSEAL', 'MSSCRAPNO', 'JFLBIKES', 'WBKMYARNKG', 'BHELSCRAP', 'SCRAPBLVM', 'JRRLPSCPLT', 'BHELSCRPKG', 'SCRAPMMSA', 'VCLUMSCPMT', 'NSCLMSCRAP', 'BHELSCRPMT', 'VIPYINDDRM', 'WBKVTHANPC', 'GUNNYBAG', 'NEWSTEJBW2', 'OSMPBOSCRP', 'RTCNLRBUSN', 'ELEMOTVCLU', 'RITUSCRQTL', 'NMSCKGBHSC', 'IAA1020RCT', 'NMSCMTBHSC', 'VCRJSCRPMT', 'VCLUSRPLT2', 'VCLUSRPMT2', 'NSCLSCRPMH', 'BHEL200NUM', 'BHEL500NUM', 'BISASCRPNO', 'VCLUSRPUT2', 'PBSABSCPKG', 'NSCS', 'BALJIUNT18', 'BHEL1000NM', 'BHEL5000NM', 'JRRLPSCPKG', 'WSUBRNMPSA', 'SCRAPKGHLD', 'KISASCRPKG', 'SCRAPNOHLD', 'WALMSCMPSA', 'GHMCSCRAP', 'MSGHRSCRA5', 'GUJVDPEWST', 'COPSCPRJPT', 'NEWSTEJFJB', 'MT5MPSA', 'RTCVIZBUSN', 'EIDPRYSCRP', 'RTINVSCRAP', 'NOS5MPSA', 'SCRAPMTHLD', 'EWASTEJBP1', 'WBSRP18ELW', 'NOS18MPSA', 'GMDCMUNIT1', 'RJMSSCRAPS', 'RTCVIZBUSS', 'SCRKGSEPSA', 'LSSASCRPLT', 'WBSRP18DRM', 'NCCSCRAPKG', 'HRCSVCLU', 'RAMSRPSCRP', 'RTCVIJBUSN', 'NCCSCRAPNO', 'NSCSMPITEM', 'RTCVIJBUSS', 'NEWSTEJBP2', 'LSSASCRPNO', 'SCRLOTEPSA', 'RTCNLRBUSS', 'JYMGLVSCRP', 'CSTYDSCPLT', 'SCRNOEPSA', 'GSSCMACHLT', 'KSRTSCRNO5', 'KRTCSCRPNO', 'KSRTSCRMT5', 'IFBSSCRAP', 'VCLUSCRAP', 'CSTYDSCPNO', 'KRTCSCRPMT', 'MT18MPSACH', 'KSRTSCRKG5', 'RENKSUGSRP', 'SWSASCRLOT', 'JFWLTEWST', 'KSRTSCRLT5', 'KRTCSCRPKG', 'JFWLTSNEWT', 'JFLITEMS', 'KSRTCSCRMT', 'MSSASCRPLT', 'IFABEWSKG', 'IFABEWANOS', 'OPSCRAP', 'IFABNEWKGS', 'IFABNEWNOS', 'BHELPCBMT', 'MSSASCRPNO', 'VCRJSCRPBL', 'BHELPBMT10', 'KSRTCSCRKG', 'JFBDBSCPDU', 'MHSCRAPUNT', 'NAVASCRPNO', 'NAVASCRPKG', 'SSSCRAP1', 'VCRJOILBRL', 'NAVPSCRPNO', 'KSRTCSCRNO', 'ADNWMSCRP5', 'MHSCRAPQTL', 'NAVPSCPLTR', 'SSSCRAP2', 'AMBERSCRAP', 'SSSCRAP4', 'MPSA', 'NOS18MPSACH', 'SSSCRAP3', 'NSCSHRQTY', 'PJRVBSCPLT', 'OPUVJEEP', 'PLSCRPMPSA', 'VCRJMIXMTL', 'GMDCSCRAP', 'SSSCRAP5', 'ODMKFSCRAP', 'SCRAPAAP', 'VCRJMGTSCR', 'OPUVBULLET', 'ODMSCRAPKG', 'VCRJEWASTE', 'SSSCRAP6', 'MSPLSPIVSR', 'ODMSCRAPUT', 'VCRJCEMBAG', 'SSSCRAP7', 'RADHIKAEMT', 'VSESSCRPNO', 'BHEL1000', 'PJLSHPQTY', 'ONECRVSFLT', 'BHEL10000', 'BHEL500', 'BHEL20', 'BHEL50', 'GMDCKG', 'SCRAPVPL', 'SSSCRAP10', 'GMDCLOT', 'GMDCLOT1', 'GMDCLTR', 'ONECRVSFNO', 'BHEL1000E', 'GMDCKG1', 'MT18MPSAAL', 'BHEL10000E', 'PJLSHPITEM', 'BLVMSCRAP', 'GMDCMLTR', 'GMDCMLTR1', 'GMDCMT', 'GMDCMMT1', 'GMDCMMT', 'GMDCMT1', 'BHEL500E', 'BHEL20E', 'VSESSCRPLT', 'MPHRC', 'EWASTEJBG1', 'BHEL50E', 'SHREDDED', 'GMDCMKG1', 'VSEESCRPNO', 'NSCUTMSCRP', 'POLICESCRP', 'NEWSTEJBG2', 'SCRAPAAPKG', 'GSFCSCRAP', 'HMSSSCRAP', 'HRMS', 'MLPWSTEBRI', 'WSSMSCMPSA', 'TSSSCRAPNO', 'LOKSEVASCP', 'CMRTRUCK', 'PMSASCRPLT', 'RADHAMILL', 'CMRSCRAP', 'NCCSCRAP', '50MTCRANE', 'CMRSCRAPRV', 'LSSASCRPKG', 'MCK2409241', 'MSSASCRPKG', 'SHREDSCRAP', 'CSTYDSCRAP', 'MSTDHVLSCP', 'RERPLSCRAP', 'RAJGRFOODS', 'DCMETNUM18', 'VELUMTLSRP', 'MSPLMSSCRP', 'ADNWLMSCRP', 'DCMETKG18', 'SSSCRAP8', 'DCMETNUM05', 'DCMETNUM28', 'GJPTSCRAP', 'DLMARKEUN', 'DIFSCRPUNT', 'GMDCUNIT', 'KSRTCSCRLT', 'GMDCMLOT1', 'DCMETKG05', 'DCMWASNM05', 'ALUMINMPSA', 'LNTLOT', 'DCMWASKG18', 'SSSCRAP9', 'NMDCSIUPEW', 'TRTCSUKITS', 'NMDCSRPSET', 'RJPVTSCRKG', 'EWASTEJBK1', 'POONASCRAP', 'MSCTDCSCRP', 'NSCHSCRAP', 'TSSSCRAPKG', '160180MTCR', 'CMRCAR', '80MTCRANE', 'SPYMSSCRAP', 'DIFSCRPKGS', 'AACTNSCPKG', 'JFLBIKESTL', 'GMDCMUNIT', 'SRITXIDUNT', 'SRISTEXIND', 'ODSASCRPLT', 'WSTTINSCRP', 'SHAHBADSRP', 'MAHDLMSROL', 'OBITMMFFS', 'PLSTCVCLU', 'MEILSCRAP', 'STEELMPMS', 'MLEWESCPLT', 'IELSHPQTY', 'SUTS7VCLU', 'KIRBYSCRAP', 'VIPPYIND', 'VCLUASCPMT', 'TSRTCSCRNO', 'RSMARKEKG', 'WBKFBRCTPC', 'VSESSCRAP', 'OSMPHVSCRP', 'ARSASCRPMT', 'EBDRVSCRAP', 'RTCKADBUSN', 'WSTSCPRJPT', 'RTCKADBUSS', 'GMDCSCRP', 'MMSCSCRPLT', 'PMSASCRPKG', '15MTCRANE', 'GMDCMKG', 'DLMARKEKG', 'MLDSTLMPSA', 'NMCBSCRAP', 'NMDCSCRAP', 'NMCHSCRAP', 'NMDCSRPKG', 'NMDCSRPNOS', 'PRAKASBATT', 'PRAKASHIND', 'PRASHIND12', 'TRTCSCRUNO', 'TRTCSCRUKG', 'TSRTCSCRKG', 'APMCSRP', 'TRTCSKKIT') THEN ord_tm_id END) AS Scrap_Bidder_count
+FROM distinct_user_contracts;
+
+
+
+43.
+1,2 auctionv2replica
+3 , 4 participantmasterv2replica
+
+--1 Auction Trade Data Ewaste
+WITH Combined_Orders AS (
+    SELECT distinct
+        ord_bidding_start_time, 
+        ord_ord_value, 
+        ord_tm_id, 
+        ord_exch_ord_no, 
+        ord_ord_type, 
+        ord_contract_code, 
+        ord_status 
+    FROM fo_orders
+    UNION ALL
+    SELECT distinct
+        ord_bidding_start_time, 
+        ord_ord_value, 
+        ord_tm_id, 
+        ord_exch_ord_no, 
+        ord_ord_type, 
+        ord_contract_code, 
+        ord_status 
+    FROM fo_orders_all_purge_data
+    UNION ALL
+    SELECT distinct
+        ord_bidding_start_time, 
+        ord_ord_value, 
+        ord_tm_id, 
+        ord_exch_ord_no, 
+        ord_ord_type, 
+        ord_contract_code, 
+        ord_status 
+    FROM FO_ORDERS_bkp_20260723
+),
+Combined_Trades AS (
+    SELECT distinct
+        order_id, 
+        trd_is_approved, 
+        last_fill_value 
+    FROM trade_mstr
+    UNION ALL
+    SELECT distinct
+        order_id, 
+        trd_is_approved, 
+        last_fill_value 
+    FROM trade_mstr_bkp_20260723
+    UNION ALL
+    SELECT distinct 
+        order_id, 
+        trd_is_approved, 
+        last_fill_value 
+    FROM trade_mstr_purge_data
+)
+SELECT 
+    CASE 
+        WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) >= 4 
+        THEN CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) + 1 AS VARCHAR), 3, 2)
+        ELSE CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1 AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR), 3, 2)
+    END AS "Financial Year",
+    COUNT(1) AS "Number of auctions conducted",
+    SUM(fo.ord_ord_value) AS "Value of auctions conducted",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN 1 ELSE 0 END) AS "Number of Successful Trades",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN tm.last_fill_value ELSE 0 END) AS "Value of Successful Trades"
+FROM 
+    Combined_Orders fo
+INNER JOIN 
+    registration_mstr rm ON fo.ord_tm_id = rm.org_id AND rm.is_mock = 'F'
+LEFT JOIN 
+    Combined_Trades tm ON fo.ord_exch_ord_no = tm.order_id
+WHERE 
+    fo.ord_ord_type = 'AO'
+    AND fo.ord_contract_code IN ('NMDCRDE'
+,'EWASTEJBW1'
+,'SCPEWVCLU'
+,'IFABEWASTE'
+,'TKEWSTLOT'
+,'JBLEWSTEKR'
+,'EWASTEJBP1'
+,'JFWLTEWST'
+,'EWASTEJBG1'
+,'EWASTEJBK1'
+,'JBLFDEWSTE'
+,'DCMWASKG05'
+,'TSKEEWMT'
+,'TSUEEWKIT'
+,'TSKEEWSET'
+,'NMDCVE'
+,'JBFEWSTMAH'
+,'JBFEWSTJHK'
+,'TSRTCEWSNO'
+,'JFEWSTRJ'
+,'TSRTCEWSKG'
+,'TSKEEWKIT'
+,'TSUEEWSET'
+,'IFABEWSKG'
+,'IFABEWANOS'
+,'VCRJEWASTE'
+,'TSRTCKE'
+,'TSRTCEWLTR'
+,'DCMWASNM05'
+,'DCMWASKG18'
+,'TSKEEWKITS'
+,'NMDCSIUPEW'
+,'MLEWESCPLT'
+,'TSRTCEWNOS'
+,'EWASTEJHB1'
+,'TSRTCEWKG'
+,'TSUEEWMT'
+,'TSUEEWKITS')
+    AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL')
+GROUP BY 
+    CASE 
+        WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) >= 4 
+        THEN CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) + 1 AS VARCHAR), 3, 2)
+        ELSE CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1 AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR), 3, 2)
+    END
+ORDER BY 
+    "Financial Year";
+
+--2 Auction Trade Data Hazardeous
+WITH Combined_Orders AS (
+    SELECT distinct
+        ord_bidding_start_time, 
+        ord_ord_value, 
+        ord_tm_id, 
+        ord_exch_ord_no, 
+        ord_ord_type, 
+        ord_contract_code, 
+        ord_status 
+    FROM fo_orders
+    UNION ALL
+    SELECT distinct
+        ord_bidding_start_time, 
+        ord_ord_value, 
+        ord_tm_id, 
+        ord_exch_ord_no, 
+        ord_ord_type, 
+        ord_contract_code, 
+        ord_status 
+    FROM fo_orders_all_purge_data
+    UNION ALL
+    SELECT distinct
+        ord_bidding_start_time, 
+        ord_ord_value, 
+        ord_tm_id, 
+        ord_exch_ord_no, 
+        ord_ord_type, 
+        ord_contract_code, 
+        ord_status 
+    FROM FO_ORDERS_bkp_20260723
+),
+Combined_Trades AS (
+    SELECT distinct
+        order_id, 
+        trd_is_approved, 
+        last_fill_value 
+    FROM trade_mstr
+    UNION ALL
+    SELECT distinct
+        order_id, 
+        trd_is_approved, 
+        last_fill_value 
+    FROM trade_mstr_bkp_20260723
+    UNION ALL
+    SELECT distinct 
+        order_id, 
+        trd_is_approved, 
+        last_fill_value 
+    FROM trade_mstr_purge_data
+)
+SELECT 
+    CASE 
+        WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) >= 4 
+        THEN CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) + 1 AS VARCHAR), 3, 2)
+        ELSE CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1 AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR), 3, 2)
+    END AS "Financial Year",
+    COUNT(1) AS "Number of auctions conducted",
+    SUM(fo.ord_ord_value) AS "Value of auctions conducted",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN 1 ELSE 0 END) AS "Number of Successful Trades",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN tm.last_fill_value ELSE 0 END) AS "Value of Successful Trades"
+FROM 
+    Combined_Orders fo
+INNER JOIN 
+    registration_mstr rm ON fo.ord_tm_id = rm.org_id AND rm.is_mock = 'F'
+LEFT JOIN 
+    Combined_Trades tm ON fo.ord_exch_ord_no = tm.order_id
+WHERE 
+    fo.ord_ord_type = 'AO'
+    AND fo.ord_contract_code IN ('POWAOSCPKG'
+,'VCRJOILBRL'
+,'WBLDEVOFG'
+,'NMDCDNUBOL'
+,'PBSABSCPKG'
+,'PRAKASBATT'
+,'WBLDANTIC'
+,'EHPWSRBHEW'
+,'DCMWASNM18'
+,'DCMWASNM28')
+    AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL')
+GROUP BY 
+    CASE 
+        WHEN EXTRACT(MONTH FROM fo.ord_bidding_start_time) >= 4 
+        THEN CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) + 1 AS VARCHAR), 3, 2)
+        ELSE CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) - 1 AS VARCHAR) || '-' || SUBSTR(CAST(EXTRACT(YEAR FROM fo.ord_bidding_start_time) AS VARCHAR), 3, 2)
+    END
+ORDER BY 
+    "Financial Year";
+	
+	
+--3 List of Participants who have EWASTE market codes
+SELECT
+    um.user_id AS "User ID",
+    um.org_id AS "ORG ID",
+    rm.org_nm AS "Organization Name",
+    COALESCE(um.user_mobile, 'NA') AS "Contact Number",
+    COALESCE(um.user_email, 'NA') AS "Email ID",
+    rm.pan_card AS "PAN Number",
+    rm.gst_number AS "GST Number",
+    rm.registered_address AS "Registered Address",
+    COALESCE(sm.state_name , 'NA') AS "State",
+    STRING_AGG(DISTINCT tmm.market_code, ', ') AS "Allocated Market Codes"
+FROM 
+    registration_mstr rm
+INNER JOIN 
+    user_mstr um ON um.org_id = rm.org_id
+INNER JOIN 
+    tm_market_mapping tmm ON tmm.tm_id = rm.org_id
+INNER JOIN 
+    state_master sm ON sm.state_code = rm.registered_state_code
+WHERE
+    tmm.market_code IN (
+        'DCM2', 'IFAB', 'IFEW', 'JBEW', 'JBG1', 'JBK1', 'JBP1', 'JBW1', 
+        'JFEB', 'JFRJ', 'JFTE', 'JHB1', 'JHEW', 'MHEW', 'MLEW', 'NMCE', 
+        'NMPE', 'NMVE', 'TKEW', 'TSKE', 'TSUE', 'VCLU', 'VCRJ'
+    )
+    AND rm.is_mock = 'F'
+    AND UPPER(rm.org_nm) NOT LIKE '%SURRENDER%'
+    AND UPPER(rm.org_nm) NOT LIKE '%TEST%'
+    AND UPPER(rm.org_nm) NOT LIKE '%MOCK%'
+GROUP BY 1,2,3,4,5,6,7,8,9
+ORDER BY
+    rm.org_nm;
+	
+	
+
+--4 List of Participants who have Hazardeous market codes
+SELECT
+    um.user_id AS "User ID",
+    um.org_id AS "ORG ID",
+    rm.org_nm AS "Organization Name",
+    COALESCE(um.user_mobile, 'NA') AS "Contact Number",
+    COALESCE(um.user_email, 'NA') AS "Email ID",
+    rm.pan_card AS "PAN Number",
+    rm.gst_number AS "GST Number",
+    rm.registered_address AS "Registered Address",
+    COALESCE(sm.state_name , 'NA') AS "State",
+    STRING_AGG(DISTINCT tmm.market_code, ', ') AS "Allocated Market Codes"
+FROM 
+    registration_mstr rm
+INNER JOIN 
+    user_mstr um ON um.org_id = rm.org_id
+INNER JOIN 
+    tm_market_mapping tmm ON tmm.tm_id = rm.org_id
+INNER JOIN 
+    state_master sm ON sm.state_code = rm.registered_state_code
+WHERE
+    tmm.market_code IN (
+        'BHEW', 'BTRY', 'DCM2', 'NMCD', 'PBSA', 'POWA', 'VCRJ', 'WBLD'
+    )
+    AND rm.is_mock = 'F'
+    AND UPPER(rm.org_nm) NOT LIKE '%SURRENDER%'
+    AND UPPER(rm.org_nm) NOT LIKE '%TEST%'
+    AND UPPER(rm.org_nm) NOT LIKE '%MOCK%'
+GROUP BY
+    1,2,3,4,5,6,7,8,9
+ORDER BY
+    rm.org_nm;
+
+
+
+43.
+query on auctionv2replica schema and provide data after approval.
+
+--Query 1: Data for Auctions Below 100 MT
+SELECT
+    TO_CHAR(fo.ord_bidding_start_time, 'Mon-YY') AS "Month",
+    COUNT(DISTINCT fo.ord_exch_ord_no) AS "Number of Auctions listed (PSS & PSF)",
+    SUM(fo.ord_ord_qty) AS "Total Qty. (in MT) offered for Sale",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN 1 ELSE 0 END) AS "Total Auctions Approved (PSS & PSF)",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN tm.last_fill_qty ELSE 0 END) AS "Total Qty (in MT) Sold"
+FROM fo_orders fo
+INNER JOIN registration_mstr rm
+    ON rm.org_id = fo.ord_tm_id
+    AND rm.is_mock = 'F'
+INNER JOIN trade_mstr tm
+    ON fo.ord_exch_ord_no = tm.order_id
+WHERE fo.global_client = 'NAFED'
+  AND fo.ord_ord_type = 'AO'
+  AND fo.ord_bidding_start_time >= '2024-07-01'
+  AND fo.ord_bidding_start_time < '2026-07-01'
+  AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL')
+  AND fo.ord_ord_qty < 100
+GROUP BY
+    DATE_TRUNC('month', fo.ord_bidding_start_time),
+    TO_CHAR(fo.ord_bidding_start_time, 'Mon-YY')
+ORDER BY
+    DATE_TRUNC('month', fo.ord_bidding_start_time) ASC;
+   
+--Query 2: Data for Auctions 100 MT and Above
+SELECT
+    TO_CHAR(fo.ord_bidding_start_time, 'Mon-YY') AS "Month",
+    COUNT(DISTINCT fo.ord_exch_ord_no) AS "Number of Auctions listed (PSS & PSF)",
+    SUM(fo.ord_ord_qty) AS "Total Qty. (in MT) offered for Sale",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN 1 ELSE 0 END) AS "Total Auctions Approved (PSS & PSF)",
+    SUM(CASE WHEN tm.trd_is_approved = 'T' THEN tm.last_fill_qty ELSE 0 END) AS "Total Qty (in MT) Sold"
+FROM fo_orders fo
+INNER JOIN registration_mstr rm
+    ON rm.org_id = fo.ord_tm_id
+    AND rm.is_mock = 'F'
+INNER JOIN trade_mstr tm
+    ON fo.ord_exch_ord_no = tm.order_id
+WHERE fo.global_client = 'NAFED'
+  AND fo.ord_ord_type = 'AO'
+  AND fo.ord_bidding_start_time >= '2024-07-01'
+  AND fo.ord_bidding_start_time < '2026-07-01'
+  AND fo.ord_status NOT IN ('UPLOAD', 'INVALID', 'PLAN', 'CNL')
+  AND fo.ord_ord_qty >= 100
+GROUP BY
+    DATE_TRUNC('month', fo.ord_bidding_start_time),
+    TO_CHAR(fo.ord_bidding_start_time, 'Mon-YY')
+ORDER BY
+    DATE_TRUNC('month', fo.ord_bidding_start_time) ASC;
